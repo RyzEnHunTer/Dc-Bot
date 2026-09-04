@@ -1,0 +1,38 @@
+# ==============================================================================
+# DCC Institutional Trading Bot - Git Ignore Rules
+# ==============================================================================
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+ENV/
+
+# Large Historical Tick Data & Caches (Do NOT push to VPS repo)
+Data/
+data_cache/
+*.parquet
+
+# Backtest Reports & Historical Trade Logs
+reports/*.csv
+scratch/
+
+# Sensitive Account Configurations (Local MT5 Logins & Bot Tokens)
+bot_accounts_config.json
+test_bot_accounts_config.json
+test_accounts_config.json
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+
+# Unit Test Artifacts
+tests/*test_accounts_config.json
+tests/*test_bot_accounts_config.json
