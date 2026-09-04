@@ -1,6 +1,8 @@
+import os
 import pandas as pd
 
-df = pd.read_csv(r"d:\FOREX\DC\reports\trades_log_strict_6month.csv")
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+df = pd.read_csv(os.path.join(base_dir, "reports", "trades_log_strict_6month.csv"))
 df['entry_time'] = pd.to_datetime(df['entry_time'], format='ISO8601')
 df['hour'] = df['entry_time'].dt.hour
 df['date'] = df['entry_time'].dt.date

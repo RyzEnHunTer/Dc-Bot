@@ -1,6 +1,8 @@
+import os
 import pandas as pd
 
-df = pd.read_csv(r"d:\FOREX\DC\reports\trades_log_with_3pct_circuit_breaker.csv")
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+df = pd.read_csv(os.path.join(base_dir, "reports", "trades_log_with_3pct_circuit_breaker.csv"))
 df['exit_time'] = pd.to_datetime(df['exit_time'], format='ISO8601')
 df = df.sort_values('exit_time').reset_index(drop=True)
 

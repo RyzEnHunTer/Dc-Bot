@@ -341,6 +341,20 @@ class InstitutionalDCCBot:
         print(f"Remote Notifications:    {notif_status}")
         print("=" * 75 + "\n")
 
+        self.notifier.notify_startup(
+            account_id=account.login,
+            server=account.server,
+            mode="dry_run" if self.dry_run else "live",
+            equity=account.equity,
+            balance=account.balance,
+            risk_pct=self.risk_per_trade * 100.0,
+            daily_dd=self.daily_loss_limit_pct,
+            max_dd=self.max_total_dd_pct,
+            symbols=self.symbols
+        )
+
+        return True
+
     @staticmethod
     def detect_liquidity_sweep(
         df_m5: pd.DataFrame,

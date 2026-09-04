@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, r"d:\FOREX\DC")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mt5_data import MT5DataProvider
 from dcc_engine import DCCEngine
 
@@ -106,9 +106,10 @@ def run_experiment():
     end_date = datetime(2026, 6, 30, 23, 59, 59)
 
     # Load trades from our strict 6-month non-overlapping dataset
-    csv_path = r"d:\FOREX\DC\reports\trades_log_with_3pct_circuit_breaker.csv"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    csv_path = os.path.join(base_dir, "reports", "trades_log_with_3pct_circuit_breaker.csv")
     if not os.path.exists(csv_path):
-        csv_path = r"d:\FOREX\DC\reports\trades_log_optimized_low_dd.csv"
+        csv_path = os.path.join(base_dir, "reports", "trades_log_optimized_low_dd.csv")
     
     df_trades = pd.read_csv(csv_path)
     df_trades['entry_time'] = pd.to_datetime(df_trades['entry_time'], format='ISO8601')

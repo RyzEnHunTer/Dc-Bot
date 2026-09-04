@@ -30,7 +30,7 @@ class FastTickBacktester:
     def __init__(
         self,
         symbol: str = "XAUUSD",
-        cache_dir: str = r"d:\FOREX\DC\data_cache",
+        cache_dir: Optional[str] = None,
         initial_balance: float = 5000.0,
         risk_per_trade: float = 0.01,
         tp1_rr: float = 1.4,
@@ -41,7 +41,10 @@ class FastTickBacktester:
         commission_per_lot: float = 5.0,
     ):
         self.symbol = symbol
-        self.cache_dir = cache_dir
+        if cache_dir is None:
+            self.cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
+        else:
+            self.cache_dir = cache_dir
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.risk_per_trade = risk_per_trade
@@ -524,7 +527,9 @@ def run_portfolio():
     df_all['month'] = pd.to_datetime(df_all['exit_time'], utc=True).dt.strftime('%Y-%m')
 
     # Save trades log
-    log_path = r"d:\FOREX\DC\trades_log_jan_jun_2026.csv"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    log_path = os.path.join(base_dir, "reports", "trades_log_jan_jun_2026.csv")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     df_all.to_csv(log_path, index=False)
     print(f"\n[Saved] Complete trade log saved to {log_path}")
 
@@ -549,7 +554,7 @@ def run_portfolio():
     plt.legend(loc='upper left', fontsize=10)
     plt.tight_layout()
 
-    chart_path = r"d:\FOREX\DC\equity_curve_jan_jun_2026.png"
+    chart_path = os.path.join(base_dir, "reports", "equity_curve_jan_jun_2026.png")
     plt.savefig(chart_path, dpi=150)
     print(f"[Saved] High-resolution equity curve saved to {chart_path}")
 

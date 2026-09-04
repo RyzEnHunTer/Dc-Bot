@@ -12,7 +12,7 @@ import sys
 import time
 import unittest
 
-sys.path.insert(0, r"d:\FOREX\DC")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from notifier import NotificationManager
 from live_bot import AccountConfigManager
 
@@ -56,7 +56,7 @@ class TestNotificationEngine(unittest.TestCase):
 
     def test_account_config_persistence(self):
         """Verifies saving and retrieving notification settings in AccountConfigManager."""
-        test_config_path = r"d:\FOREX\DC\tests\test_accounts_config.json"
+        test_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_accounts_config.json")
         if os.path.exists(test_config_path):
             os.remove(test_config_path)
 

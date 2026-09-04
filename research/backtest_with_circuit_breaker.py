@@ -135,14 +135,15 @@ def run_circuit_breaker_audit(csv_path: str, title: str, daily_dd_limit_pct: flo
     return df_exec, df_blocked, current_balance, roi_pct, max_dd, len(df_blocked)
 
 if __name__ == "__main__":
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # Test on the Optimized Low-DD dataset
-    csv_opt = r"d:\FOREX\DC\reports\trades_log_optimized_low_dd.csv"
+    csv_opt = os.path.join(base_dir, "reports", "trades_log_optimized_low_dd.csv")
     df_exec, df_blocked, final_bal, roi, max_dd, n_blocked = run_circuit_breaker_audit(
         csv_opt, "6-Month Low-DD Strategy (Jan - Jun 2026)", daily_dd_limit_pct=3.0
     )
 
     # Save trades log with circuit breaker
-    out_csv = r"d:\FOREX\DC\reports\trades_log_with_3pct_circuit_breaker.csv"
+    out_csv = os.path.join(base_dir, "reports", "trades_log_with_3pct_circuit_breaker.csv")
     df_exec.to_csv(out_csv, index=False)
     print(f"\nSaved updated trades log to: {out_csv}")
 
@@ -175,7 +176,7 @@ if __name__ == "__main__":
     ax2.legend(loc='lower left', framealpha=0.8)
 
     plt.tight_layout()
-    out_png = r"d:\FOREX\DC\reports\equity_curve_with_3pct_circuit_breaker.png"
+    out_png = os.path.join(base_dir, "reports", "equity_curve_with_3pct_circuit_breaker.png")
     plt.savefig(out_png, dpi=300)
     plt.close()
     print(f"Saved equity curve plot to: {out_png}")

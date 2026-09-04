@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, r"d:\FOREX\DC")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mt5_data import MT5DataProvider
 from experimental.test_5m_liquidity_sweep import detect_liquidity_sweep
 
@@ -20,7 +20,8 @@ def run_full_comparison():
     start_date = datetime(2026, 1, 2)
     end_date = datetime(2026, 6, 30, 23, 59, 59)
 
-    csv_path = r"d:\FOREX\DC\reports\trades_log_with_3pct_circuit_breaker.csv"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    csv_path = os.path.join(base_dir, "reports", "trades_log_with_3pct_circuit_breaker.csv")
     df_trades = pd.read_csv(csv_path)
     df_trades['entry_time'] = pd.to_datetime(df_trades['entry_time'], format='ISO8601')
     df_trades['exit_time'] = pd.to_datetime(df_trades['exit_time'], format='ISO8601')
@@ -175,7 +176,7 @@ def run_full_comparison():
     ax2.legend(loc='lower left', framealpha=0.8)
 
     plt.tight_layout()
-    plot_path = r"d:\FOREX\DC\reports\liquidity_sweep_comparison_curve.png"
+    plot_path = os.path.join(base_dir, "reports", "liquidity_sweep_comparison_curve.png")
     plt.savefig(plot_path, dpi=300)
     plt.close()
     print(f"\nSaved comparison equity curve to: {plot_path}")

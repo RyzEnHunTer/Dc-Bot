@@ -1,8 +1,10 @@
+import os
 import pandas as pd
 
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for fname, name in [
-    (r"d:\FOREX\DC\reports\trades_log_strict_6month.csv", "6-Month Strict (All Hours)"),
-    (r"d:\FOREX\DC\reports\trades_log_optimized_low_dd.csv", "6-Month Optimized (Skip 9, 13 UTC)")
+    (os.path.join(base_dir, "reports", "trades_log_strict_6month.csv"), "6-Month Strict (All Hours)"),
+    (os.path.join(base_dir, "reports", "trades_log_optimized_low_dd.csv"), "6-Month Optimized (Skip 9, 13 UTC)")
 ]:
     df = pd.read_csv(fname)
     df['entry_time'] = pd.to_datetime(df['entry_time'], format='ISO8601')

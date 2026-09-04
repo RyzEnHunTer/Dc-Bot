@@ -13,8 +13,12 @@ import numpy as np
 
 
 class MT5DataProvider:
-    def __init__(self, cache_dir: str = "d:\\FOREX\\DC\\data_cache"):
-        self.cache_dir = cache_dir
+    def __init__(self, cache_dir: Optional[str] = None):
+        if cache_dir is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.cache_dir = os.path.join(base_dir, "data_cache")
+        else:
+            self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
         self._connected = False
 

@@ -15,11 +15,13 @@ import numpy as np
 def ingest_tick_csv(
     csv_path: str,
     symbol: str,
-    output_dir: str = r"d:\FOREX\DC\data_cache",
+    output_dir: Optional[str] = None,
     start_date_str: str = "2026.01.01",
     end_date_str: str = "2026.06.30",
     chunksize: int = 250_000,
 ):
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data_cache")
     print(f"\n=======================================================")
     print(f"Ingesting Tick Data: {symbol}")
     print(f"Source: {csv_path}")
@@ -139,8 +141,9 @@ def ingest_tick_csv(
 
 
 if __name__ == "__main__":
-    xau_csv = r"d:\FOREX\DC\Data\XAUUSD_202601020100_202609032214.csv"
-    nas_csv = r"d:\FOREX\DC\Data\NAS100_202601020100_202609032235.csv"
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    xau_csv = os.path.join(base_dir, "Data", "XAUUSD_202601020100_202609032214.csv")
+    nas_csv = os.path.join(base_dir, "Data", "NAS100_202601020100_202609032235.csv")
 
     # Ingest Nasdaq first (smaller, ~2.7 GB)
     if os.path.exists(nas_csv):
