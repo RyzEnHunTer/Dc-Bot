@@ -14,8 +14,9 @@ Architecture:
 """
 
 import argparse
+import csv
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 import json
 import os
 import sys
@@ -97,6 +98,70 @@ class ActiveTwinPosition:
     ticket_b: int               # 50% Runner
     ticket_a_closed: bool = False
     runner_moved_to_be: bool = False
+
+
+class MarketAuditLogger:
+    """
+    Forensic Market Calculation Logger.
+    Records every 5M candle close calculation for XAUUSD & NAS100:
+    - OHLC, 5M EMA9, 5M EMA20, 5M VWAP, EMA Gap & Compression Ratio
+    - 1H Bias (+1/-1/0), 1H EMA9, 1H EMA20, 1H ADX, 1H ATR
+    - 5M Swing High/Low, 2H Swing High/Low
+    - 5M Liquidity Sweep Confluence (Swept level, pts swept, status)
+    - Arming Decision & Exact Rejection Reason
+    - Planned Order Parameters (Lots, SL, TP1, TP2)
+    Saves to:
+    1. logs/market_calculations_YYYYMMDD.csv (structured data for 1-to-1 backtest comparison)
+    2. logs/market_surveillance_YYYYMMDD.log (human-readable event stream)
+    """
+    def __init__(self, log_dir: Optional[str] = None):
+        if log_dir is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            self.log_dir = os.path.join(base_dir, "logs")
+        else:
+            self.log_dir = log_dir
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.csv_headers = [
+            "timestamp_utc", "timestamp_ist", "symbol",
+            "open", "high", "low", "close", "volume",
+            "ema9_5m", "ema20_5m", "ema_gap", "ema_gap_ratio_atr", "vwap_5m",
+            "bias_1h", "ema9_1h", "ema20_1h", "adx_1h", "atr_1h", "h1_ema20_level",
+            "swing_low_5m", "swing_high_5m", "swing_low_2h", "swing_high_2h",
+            "sweep_detected", "sweep_level", "swept_pts",
+            "decision", "reason",
+            "planned_entry", "planned_sl", "planned_tp1", "planned_tp2", "planned_lots"
+        ]
+
+    def log_candle(self, data: Dict):
+        date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        csv_path = os.path.join(self.log_dir, f"market_calculations_{date_str}.csv")
+        txt_path = os.path.join(self.log_dir, f"market_surveillance_{date_str}.log")
+
+        file_exists = os.path.exists(csv_path)
+        try:
+            with open(csv_path, mode="a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=self.csv_headers)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(data)
+        except Exception as e:
+            pass
+
+        try:
+            log_line = (
+                f"[{data.get('timestamp_utc', '')} UTC | {data.get('timestamp_ist', '')} IST] "
+                f"{data.get('symbol', '')} | C: {data.get('close', 0.0):.2f} | "
+                f"EMA9: {data.get('ema9_5m', 0.0):.2f} | EMA20: {data.get('ema20_5m', 0.0):.2f} | "
+                f"Gap: {data.get('ema_gap', 0.0):.2f} | Bias: {data.get('bias_1h', 0)} | "
+                f"ADX: {data.get('adx_1h', 0.0):.1f} | ATR: {data.get('atr_1h', 0.0):.2f} | "
+                f"SwL_5M: {data.get('swing_low_5m', 0.0):.2f} | SwH_5M: {data.get('swing_high_5m', 0.0):.2f} | "
+                f"Sweep: {data.get('sweep_detected', False)} | Status: {data.get('decision', '')} "
+                f"({data.get('reason', '')})\n"
+            )
+            with open(txt_path, mode="a", encoding="utf-8") as f:
+                f.write(log_line)
+        except Exception:
+            pass
 
 
 CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_accounts_config.json")
@@ -268,6 +333,10 @@ class InstitutionalDCCBot:
         self.use_liquidity_sweep = use_liquidity_sweep
         self.notifier = NotificationManager()
         self.session_notified: Dict[str, bool] = {}
+        self.audit_logger = MarketAuditLogger()
+        self.spinner_frames = ["[|]", "[/]", "[-]", "[\\]"]
+        self.spinner_idx = 0
+        self.tz_ist = timezone(timedelta(hours=5, minutes=30))
 
         self.data_provider = MT5DataProvider()
         self.engines: Dict[str, DCCEngine] = {}
@@ -315,6 +384,14 @@ class InstitutionalDCCBot:
             self.high_water_mark = account.equity
         elif account.equity > self.high_water_mark:
             self.high_water_mark = account.equity
+
+        for s in self.symbols:
+            if not mt5.symbol_select(s, True):
+                print(f"[ERROR] Could not select symbol {s}")
+                return False
+            info = mt5.symbol_info(s)
+            fill_mode = self.get_safe_filling_mode(info)
+            print(f"[{s}] Contract={info.trade_contract_size} | Digits={info.digits} | MinLot={info.volume_min} | FillingMode={fill_mode}")
 
         print("\n" + "=" * 75)
         print("INSTITUTIONAL DCC BOT INITIALIZED")
@@ -416,29 +493,6 @@ class InstitutionalDCCBot:
 
             return False, 0.0, 0.0
 
-        # Dispatch remote startup alert
-        self.notifier.notify_startup(
-            account_id=account.login,
-            server=account.server,
-            mode="dry_run" if self.dry_run else "live",
-            equity=account.equity,
-            balance=account.balance,
-            risk_pct=self.risk_per_trade * 100.0,
-            daily_dd=self.daily_loss_limit_pct,
-            max_dd=self.max_total_dd_pct,
-            symbols=self.symbols
-        )
-
-        for s in self.symbols:
-            if not mt5.symbol_select(s, True):
-                print(f"[ERROR] Could not select symbol {s}")
-                return False
-            info = mt5.symbol_info(s)
-            fill_mode = self.get_safe_filling_mode(info)
-            print(f"[{s}] Contract={info.trade_contract_size} | Digits={info.digits} | MinLot={info.volume_min} | FillingMode={fill_mode}")
-
-        return True
-
     @staticmethod
     def get_safe_filling_mode(info) -> int:
         """Determines valid MT5 filling mode for broker to avoid TRADE_RETCODE_INVALID_FILL."""
@@ -493,27 +547,18 @@ class InstitutionalDCCBot:
             return None
 
     def check_candle_arm_status(self, symbol: str):
-        """Runs immediately on 5M candle close: Evaluates if NEXT candle is armed for entry."""
-        # 0. Check Daily Circuit Breaker
-        if self.circuit_breaker_active:
-            self.armed_states[symbol].is_armed = False
-            return
-
-        # 1. Check if position already open for this symbol
-        open_pos = mt5.positions_get(symbol=symbol)
-        if open_pos and len(open_pos) > 0:
-            self.armed_states[symbol].is_armed = False
-            return
-
-        # 2. Check dead hours (09:00 and 13:00 UTC)
+        """
+        Runs on 5M candle close:
+        1. Calculates all indicators (EMA9, EMA20, VWAP, 1H Bias, ADX, ATR, 5M & 2H Swing High/Low).
+        2. Detects 5M liquidity sweep (Turtle soup) status and exact swept price levels.
+        3. Logs the calculation to CSV & text log for 1-to-1 backtest comparison and debugging.
+        4. Prints a formatted forensic audit card on the terminal.
+        5. If valid, arms the setup for live tick breakout execution.
+        """
         now_utc = datetime.now(timezone.utc)
-        if now_utc.hour in [9, 13]:
-            if self.armed_states[symbol].is_armed:
-                print(f"[{symbol}] Disarming: Entering Dead Trap Hour ({now_utc.hour:02d}:00 UTC).")
-            self.armed_states[symbol].is_armed = False
-            return
+        digits = 2 if "XAU" in symbol else 1
 
-        # 3. Fetch rates with warmup
+        # Fetch rates with warmup
         m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 150)
         h1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 50)
         h2_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H2, 0, 50)
@@ -540,59 +585,145 @@ class InstitutionalDCCBot:
         # Look at the newly closed 5M bar (index -2)
         closed_bar = df_prep.iloc[-2]
         c_time = closed_bar.name
-        bias = closed_bar['bias_1h']
-        adx = closed_bar['adx_1h']
-        atr = closed_bar['atr_1h']
-        vwap = closed_bar['vwap_5m']
-        h1_e20 = closed_bar['ema20_1h']
-        m5_e9 = closed_bar['ema9_5m']
-        m5_e20 = closed_bar['ema20_5m']
-        close_p = closed_bar['close']
+        c_time_str = c_time.strftime("%Y-%m-%d %H:%M:%S")
+        ist_time_str = c_time.astimezone(self.tz_ist).strftime("%Y-%m-%d %H:%M:%S")
 
-        if pd.isna(bias) or bias == 0 or adx < CONFIGS[symbol].adx_min or atr <= 0:
-            self.armed_states[symbol].is_armed = False
-            return
+        open_p = float(closed_bar['open'])
+        high_p = float(closed_bar['high'])
+        low_p = float(closed_bar['low'])
+        close_p = float(closed_bar['close'])
+        vol = float(closed_bar['volume'])
+
+        m5_e9 = float(closed_bar['ema9_5m'])
+        m5_e20 = float(closed_bar['ema20_5m'])
+        ema_gap = abs(m5_e9 - m5_e20)
+        vwap = float(closed_bar['vwap_5m'])
+
+        bias = int(closed_bar['bias_1h']) if not pd.isna(closed_bar['bias_1h']) else 0
+        h1_e9 = float(closed_bar['ema9_1h']) if not pd.isna(closed_bar['ema9_1h']) else 0.0
+        h1_e20 = float(closed_bar['ema20_1h']) if not pd.isna(closed_bar['ema20_1h']) else 0.0
+        adx = float(closed_bar['adx_1h']) if not pd.isna(closed_bar['adx_1h']) else 0.0
+        atr = float(closed_bar['atr_1h']) if not pd.isna(closed_bar['atr_1h']) else 0.0
+        ema_gap_ratio = ema_gap / (atr + 1e-9)
+
+        # Swing levels
+        sw_high_5m = float(df_m5['high'].iloc[-22:-2].max()) if len(df_m5) >= 22 else high_p
+        sw_low_5m = float(df_m5['low'].iloc[-22:-2].min()) if len(df_m5) >= 22 else low_p
+        sw_high_2h = float(closed_bar['swing_high_2h']) if ('swing_high_2h' in closed_bar and not pd.isna(closed_bar['swing_high_2h'])) else 0.0
+        sw_low_2h = float(closed_bar['swing_low_2h']) if ('swing_low_2h' in closed_bar and not pd.isna(closed_bar['swing_low_2h'])) else 0.0
+
+        # Liquidity Sweep check
+        sweep_dir = bias if bias != 0 else (1 if m5_e9 <= m5_e20 else -1)
+        has_sweep, sweep_lvl, pts = self.detect_liquidity_sweep(
+            df_m5, len(df_m5) - 2, sweep_dir,
+            swing_lookback=20, pullback_window=8
+        )
 
         cfg = CONFIGS[symbol]
         sl_dist = cfg.atr_sl_multiplier * atr
         tp1_dist = cfg.tp1_rr * sl_dist
         tp2_dist = cfg.tp2_rr * sl_dist
 
-        # Check for Pre-Flip Compression on Candle [t-1]
-        ema_gap = abs(m5_e9 - m5_e20)
-        is_candidate = False
+        open_pos = mt5.positions_get(symbol=symbol)
+
+        decision = "NOT_ARMED"
+        reason = "Normal price oscillation (no DCC setup)"
+        planned_entry = 0.0
+        planned_sl = 0.0
+        planned_tp1 = 0.0
+        planned_tp2 = 0.0
+        planned_lots = 0.0
         direction = 0
 
-        # Bullish setup candidate
-        if bias == 1 and (m5_e9 <= m5_e20):
-            # Pullback is active and EMA gap is compressing towards 0
-            if ema_gap <= (0.35 * atr) and close_p > vwap:
-                is_candidate = True
+        # 1. Circuit breaker check
+        if self.circuit_breaker_active:
+            decision = "BLOCKED_CIRCUIT_BREAKER"
+            reason = f"Daily -{self.daily_loss_limit_pct:.1f}% Circuit Breaker is ACTIVE"
+            self.armed_states[symbol].is_armed = False
+        # 2. Existing position check
+        elif open_pos and len(open_pos) > 0:
+            decision = "BLOCKED_POSITION_OPEN"
+            reason = f"Trade already active on {symbol} (Ticket #{open_pos[0].ticket})"
+            self.armed_states[symbol].is_armed = False
+        # 3. Dead trap hours (09:00 & 13:00 UTC)
+        elif now_utc.hour in [9, 13]:
+            decision = "SKIPPED_DEAD_HOUR"
+            reason = f"Dead Trap Hour Filter Active ({now_utc.hour:02d}:00 UTC)"
+            self.armed_states[symbol].is_armed = False
+        # 4. ADX threshold check
+        elif adx < cfg.adx_min:
+            decision = "SKIPPED_LOW_ADX"
+            reason = f"1H ADX ({adx:.1f}) < min threshold ({cfg.adx_min:.1f})"
+            self.armed_states[symbol].is_armed = False
+        # 5. Bias check
+        elif bias == 0 or pd.isna(bias):
+            decision = "SKIPPED_NEUTRAL_BIAS"
+            reason = "1H Trend Neutral (EMA9 == EMA20)"
+            self.armed_states[symbol].is_armed = False
+        elif atr <= 0:
+            decision = "SKIPPED_INVALID_ATR"
+            reason = f"ATR is invalid ({atr:.2f})"
+            self.armed_states[symbol].is_armed = False
+        else:
+            # Check setup formation
+            if bias == 1:
                 direction = 1
-
-        # Bearish setup candidate
-        elif bias == -1 and (m5_e9 >= m5_e20):
-            if ema_gap <= (0.35 * atr) and close_p < vwap:
-                is_candidate = True
-                direction = -1
-
-        if is_candidate:
-            # 5M Liquidity Sweep Confluence Check
-            if self.use_liquidity_sweep:
-                has_sweep, sweep_lvl, pts = self.detect_liquidity_sweep(
-                    df_m5, len(df_m5) - 2, direction,
-                    swing_lookback=20, pullback_window=8
-                )
-                dir_label = "low" if direction == 1 else "high"
-                if not has_sweep:
-                    print(f"[{symbol}] Setup Candidate Skipped: 5M swing {dir_label} liquidity sweep confluence not satisfied.")
+                if m5_e9 > m5_e20:
+                    decision = "SKIPPED_NO_PULLBACK"
+                    reason = f"Trend expansion active (EMA9 {m5_e9:.2f} > EMA20 {m5_e20:.2f})"
                     self.armed_states[symbol].is_armed = False
-                    return
+                elif close_p <= vwap:
+                    decision = "SKIPPED_BELOW_VWAP"
+                    reason = f"5M Close below Session VWAP ({close_p:.2f} <= {vwap:.2f})"
+                    self.armed_states[symbol].is_armed = False
+                elif ema_gap > (0.35 * atr):
+                    decision = "SKIPPED_GAP_TOO_WIDE"
+                    reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                    self.armed_states[symbol].is_armed = False
+                elif self.use_liquidity_sweep and not has_sweep:
+                    decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                    reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
+                    self.armed_states[symbol].is_armed = False
                 else:
-                    print(f"[{symbol} 5M SWEEP CONFIRMED] Turtle soup sweep of swing {dir_label} @ {sweep_lvl:.2f} by {pts:.2f} pts.")
+                    decision = "ARMED_BUY"
+                    reason = "1H Bullish + 5M Compression + VWAP + Sweep Confirmed"
+            elif bias == -1:
+                direction = -1
+                if m5_e9 < m5_e20:
+                    decision = "SKIPPED_NO_PULLBACK"
+                    reason = f"Trend expansion active (EMA9 {m5_e9:.2f} < EMA20 {m5_e20:.2f})"
+                    self.armed_states[symbol].is_armed = False
+                elif close_p >= vwap:
+                    decision = "SKIPPED_ABOVE_VWAP"
+                    reason = f"5M Close above Session VWAP ({close_p:.2f} >= {vwap:.2f})"
+                    self.armed_states[symbol].is_armed = False
+                elif ema_gap > (0.35 * atr):
+                    decision = "SKIPPED_GAP_TOO_WIDE"
+                    reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                    self.armed_states[symbol].is_armed = False
+                elif self.use_liquidity_sweep and not has_sweep:
+                    decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                    reason = f"5M Swing High ({sw_high_5m:.2f}) liquidity sweep not satisfied"
+                    self.armed_states[symbol].is_armed = False
+                else:
+                    decision = "ARMED_SELL"
+                    reason = "1H Bearish + 5M Compression + VWAP + Sweep Confirmed"
 
+        if decision.startswith("ARMED"):
             tot_lots, p_lots, r_lots = self.calculate_lots(symbol, sl_dist)
+            planned_lots = tot_lots
             target_close = c_time + pd.Timedelta(minutes=5)
+            if direction == 1:
+                planned_entry = round(high_p, digits)
+                planned_sl = round(high_p - sl_dist, digits)
+                planned_tp1 = round(high_p + tp1_dist, digits)
+                planned_tp2 = round(high_p + tp2_dist, digits)
+            else:
+                planned_entry = round(low_p, digits)
+                planned_sl = round(low_p + sl_dist, digits)
+                planned_tp1 = round(low_p - tp1_dist, digits)
+                planned_tp2 = round(low_p - tp2_dist, digits)
+
             self.armed_states[symbol] = PreArmedState(
                 is_armed=True,
                 direction=direction,
@@ -612,16 +743,64 @@ class InstitutionalDCCBot:
                 partial_lots=p_lots,
                 runner_lots=r_lots
             )
-            dir_str = "BULLISH" if direction == 1 else "BEARISH"
-            print(f"\n" + "#" * 70)
-            print(f">>> [SETUP ARMED - {symbol}] <<<")
-            print(f"Condition:  1H {dir_str} Bias Active | 5M Pre-Flip Compression (Gap={ema_gap:.2f})")
-            print(f"Candle [t]: Will monitor live ticks to confirm trigger at {target_close.strftime('%H:%M:%S')} UTC")
-            print(f"Pre-Calculated Lots: {tot_lots} (TP1: {p_lots} lots | Runner: {r_lots} lots)")
-            print(f"SL Distance: {sl_dist:.2f} | TP1: {tp1_dist:.2f} | TP2: {tp2_dist:.2f}")
-            print("#" * 70 + "\n")
+
+        # Log complete calculation record to CSV and surveillance log
+        log_record = {
+            "timestamp_utc": c_time_str,
+            "timestamp_ist": ist_time_str,
+            "symbol": symbol,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": close_p,
+            "volume": vol,
+            "ema9_5m": round(m5_e9, digits),
+            "ema20_5m": round(m5_e20, digits),
+            "ema_gap": round(ema_gap, digits),
+            "ema_gap_ratio_atr": round(ema_gap_ratio, 3),
+            "vwap_5m": round(vwap, digits),
+            "bias_1h": bias,
+            "ema9_1h": round(h1_e9, digits),
+            "ema20_1h": round(h1_e20, digits),
+            "adx_1h": round(adx, 2),
+            "atr_1h": round(atr, digits),
+            "h1_ema20_level": round(h1_e20, digits),
+            "swing_low_5m": round(sw_low_5m, digits),
+            "swing_high_5m": round(sw_high_5m, digits),
+            "swing_low_2h": round(sw_low_2h, digits),
+            "swing_high_2h": round(sw_high_2h, digits),
+            "sweep_detected": has_sweep,
+            "sweep_level": round(sweep_lvl, digits),
+            "swept_pts": round(pts, digits),
+            "decision": decision,
+            "reason": reason,
+            "planned_entry": planned_entry,
+            "planned_sl": planned_sl,
+            "planned_tp1": planned_tp1,
+            "planned_tp2": planned_tp2,
+            "planned_lots": planned_lots
+        }
+        self.audit_logger.log_candle(log_record)
+
+        # Terminal Visual Card
+        bias_label = "BULLISH (+1)" if bias == 1 else ("BEARISH (-1)" if bias == -1 else "NEUTRAL (0)")
+        adx_status = "PASS" if adx >= cfg.adx_min else "FAIL"
+        sweep_str = f"CONFIRMED (Swept {sweep_lvl:.{digits}f} by {pts:.{digits}f} pts)" if has_sweep else "NO SWEEP"
+        
+        print("\n" + "=" * 80)
+        print(f"  [5M CANDLE EVALUATION AUDIT] {symbol} | {c_time_str} UTC ({ist_time_str} IST)")
+        print("=" * 80)
+        print(f"  * Candle OHLC:    Open: {open_p:.{digits}f} | High: {high_p:.{digits}f} | Low: {low_p:.{digits}f} | Close: {close_p:.{digits}f} | Vol: {int(vol):,}")
+        print(f"  * 5M Indicators:  EMA9: {m5_e9:.{digits}f} | EMA20: {m5_e20:.{digits}f} | Gap: {ema_gap:.{digits}f} ({ema_gap_ratio:.2f}x ATR) | VWAP: {vwap:.{digits}f}")
+        print(f"  * 1H Map Context: Bias: {bias_label} | ADX: {adx:.1f} ({adx_status} >= {cfg.adx_min:.1f}) | ATR: {atr:.{digits}f} | 1H EMA20: {h1_e20:.{digits}f}")
+        print(f"  * Swing Levels:   5M Low: {sw_low_5m:.{digits}f} | 5M High: {sw_high_5m:.{digits}f} | 2H Low: {sw_low_2h:.{digits}f} | 2H High: {sw_high_2h:.{digits}f}")
+        print(f"  * 5M Sweep Check: {sweep_str}")
+        if decision.startswith("ARMED"):
+            print(f"  * DECISION:       >>> {decision} <<<")
+            print(f"    Planned Setup:  Entry: {planned_entry:.{digits}f} | SL: {planned_sl:.{digits}f} | TP1: {planned_tp1:.{digits}f} | TP2: {planned_tp2:.{digits}f} | Lots: {planned_lots}")
         else:
-            self.armed_states[symbol].is_armed = False
+            print(f"  * DECISION:       {decision} -> {reason}")
+        print("=" * 80 + "\n")
 
     def process_tick_stream_last_2min(self, symbol: str, seconds_left: float):
         """High-frequency tick handler active during the last 2 minutes of the armed candle."""
@@ -842,13 +1021,17 @@ class InstitutionalDCCBot:
 
     def run(self):
         print("\n[InstitutionalDCCBot] Starting Live Monitoring Loop...")
-        print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream\n")
+        print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
+        print(f"Logging System: Live calculations saved to {self.audit_logger.log_dir}/market_calculations_YYYYMMDD.csv\n")
 
         try:
             while True:
                 now_utc = datetime.now(timezone.utc)
+                now_ist = now_utc.astimezone(self.tz_ist)
                 seconds_into_5m = (now_utc.minute % 5) * 60 + now_utc.second + now_utc.microsecond / 1_000_000.0
                 seconds_left_in_5m = 300.0 - seconds_into_5m
+                m_left = int(seconds_left_in_5m // 60)
+                s_left = int(seconds_left_in_5m % 60)
 
                 # 0. Check daily rollover (00:00 UTC)
                 today = now_utc.date()
@@ -879,6 +1062,7 @@ class InstitutionalDCCBot:
                     if self.high_water_mark > 0:
                         total_dd_pct = (self.high_water_mark - current_equity) / self.high_water_mark * 100.0
                         if total_dd_pct >= self.max_total_dd_pct:
+                            sys.stdout.write("\n")
                             print("\n" + "!" * 80)
                             print(f"[🚨 EMERGENCY: MAX ACCOUNT DRAWDOWN -{total_dd_pct:.2f}% REACHED 🚨]")
                             print(f"High-Water Mark:   ${self.high_water_mark:,.2f}")
@@ -896,6 +1080,7 @@ class InstitutionalDCCBot:
                         daily_dd_pct = (self.daily_starting_equity - current_equity) / self.daily_starting_equity * 100.0
                         if daily_dd_pct >= self.daily_loss_limit_pct and not self.circuit_breaker_active:
                             self.circuit_breaker_active = True
+                            sys.stdout.write("\n")
                             print("\n" + "!" * 80)
                             print(f"[🚨 DAILY {self.daily_loss_limit_pct:.1f}% CIRCUIT BREAKER TRIGGERED 🚨]")
                             print(f"Daily Starting Equity: ${self.daily_starting_equity:,.2f}")
@@ -924,31 +1109,52 @@ class InstitutionalDCCBot:
                 # 3. Manage any active positions (Breakeven automator)
                 self.manage_active_positions()
 
-                # 4. Check each symbol
+                # 4. Check for newly closed 5M bar on each symbol
+                for symbol in self.symbols:
+                    m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 2)
+                    if m5_rates is not None and len(m5_rates) >= 2:
+                        last_bar_t = m5_rates[-2]['time']
+                        if self.last_checked_bars[symbol] is None:
+                            self.last_checked_bars[symbol] = last_bar_t
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                            self.check_candle_arm_status(symbol)
+                        elif self.last_checked_bars[symbol] != last_bar_t:
+                            self.last_checked_bars[symbol] = last_bar_t
+                            sys.stdout.write("\n")
+                            sys.stdout.flush()
+                            self.check_candle_arm_status(symbol)
+
+                # 5. Process Armed Candlestick Tick Streaming in last 2 minutes
                 for symbol in self.symbols:
                     state = self.armed_states[symbol]
-
-                    # A. If armed and in the final 2 minutes (<= 120 seconds left)
                     if state.is_armed and seconds_left_in_5m <= 120.0:
                         self.process_tick_stream_last_2min(symbol, seconds_left_in_5m)
 
-                    # B. Check for newly closed 5M bar (at seconds_into_5m <= 5s)
-                    elif seconds_into_5m <= 5.0:
-                        m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 2)
-                        if m5_rates is not None and len(m5_rates) >= 2:
-                            last_bar_t = m5_rates[-2]['time']
-                            if self.last_checked_bars[symbol] != last_bar_t:
-                                self.last_checked_bars[symbol] = last_bar_t
-                                self.check_candle_arm_status(symbol)
-
-                # High frequency sleep during last 2 mins of armed setup, else light polling
+                # 6. Real-time Heartbeat & Status Animation
                 any_armed_in_window = any(
                     s.is_armed and seconds_left_in_5m <= 120.0 for s in self.armed_states.values()
                 )
-                if any_armed_in_window:
-                    pytime.sleep(0.05)  # 50ms smooth tick poll without CPU hogging
+                if not any_armed_in_window:
+                    frame = self.spinner_frames[self.spinner_idx % len(self.spinner_frames)]
+                    self.spinner_idx += 1
+
+                    tick_xau = mt5.symbol_info_tick("XAUUSD")
+                    tick_nas = mt5.symbol_info_tick("NAS100")
+                    xau_str = f"{tick_xau.bid:.2f}/{tick_xau.ask:.2f} (Sp: {tick_xau.ask-tick_xau.bid:.2f})" if tick_xau else "N/A"
+                    nas_str = f"{tick_nas.bid:.1f}/{tick_nas.ask:.1f} (Sp: {tick_nas.ask-tick_nas.bid:.1f})" if tick_nas else "N/A"
+                    eq_val = f"${account.equity:,.2f}" if account else "$0.00"
+
+                    hb = (
+                        f"[SURVEILLANCE {frame}] {now_utc.strftime('%H:%M:%S')} UTC ({now_ist.strftime('%H:%M:%S')} IST) | "
+                        f"XAU: {xau_str} | NAS: {nas_str} | Next Bar in: {m_left:02d}m {s_left:02d}s | "
+                        f"Eq: {eq_val}"
+                    )
+                    sys.stdout.write(f"\r{hb.ljust(115)}")
+                    sys.stdout.flush()
+                    pytime.sleep(1.0)
                 else:
-                    pytime.sleep(1.0)   # 1s relaxed background polling
+                    pytime.sleep(0.05)
 
         except KeyboardInterrupt:
             print("\n[InstitutionalDCCBot] Shutdown requested by user.")
@@ -1152,6 +1358,12 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="Run DCC Institutional Live Bot on MT5")
     parser.add_argument("--symbols", nargs="+", default=None)
     parser.add_argument("--risk", type=float, default=None, help="Risk per trade as decimal (e.g. 0.01 for 1 percent)")
