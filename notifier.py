@@ -16,11 +16,42 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, Tuple
 import urllib.error
 import urllib.parse
 import urllib.request
+
+TZ_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def format_dual_time(dt: Optional[datetime] = None, include_date: bool = True) -> str:
+    """Formats datetime into dual UTC + IST string for clear local time visibility."""
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+
+    dt_ist = dt.astimezone(TZ_IST)
+    if include_date:
+        return f"{dt.strftime('%Y-%m-%d %H:%M:%S')} UTC ({dt_ist.strftime('%Y-%m-%d %H:%M:%S')} IST)"
+    return f"{dt.strftime('%H:%M:%S')} UTC ({dt_ist.strftime('%H:%M:%S')} IST)"
+
+
+def format_dual_hhmm(utc_hhmm: str) -> str:
+    """Converts a UTC HH:MM string to dual 'HH:MM UTC (HH:MM IST)' string."""
+    try:
+        raw = utc_hhmm.replace("UTC", "").strip()
+        parts = raw.split(":")
+        h, m = int(parts[0]), int(parts[1])
+        now_d = datetime.now(timezone.utc).date()
+        dt_utc = datetime(now_d.year, now_d.month, now_d.day, h, m, tzinfo=timezone.utc)
+        dt_ist = dt_utc.astimezone(TZ_IST)
+        return f"{raw} UTC ({dt_ist.strftime('%H:%M')} IST)"
+    except Exception:
+        return f"{utc_hhmm} UTC"
 
 
 class NotificationManager:
@@ -134,7 +165,7 @@ class NotificationManager:
     @classmethod
     def test_connection(cls, platform: str, token_or_url: str, chat_id: Optional[str] = None) -> Tuple[bool, str]:
         """Synchronous connection test triggered from the interactive menu."""
-        test_msg = f"🔔 <b>[DCC BOT CONNECTION TEST]</b>\n\nYour remote notification channel is active and operational!\nTime: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        test_msg = f"🔔 <b>[DCC BOT CONNECTION TEST]</b>\n\nYour remote notification channel is active and operational!\nTime: {format_dual_time(include_date=True)}"
         if platform == "telegram":
             if not token_or_url or not chat_id:
                 return False, "Bot Token and Chat ID cannot be empty."
@@ -146,27 +177,32 @@ class NotificationManager:
                 "title": "🔔 DCC BOT CONNECTION TEST",
                 "description": "Your remote Discord notification channel is active and operational!",
                 "color": 0x00FFAA,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "footer": {"text": f"Tested at {format_dual_time(include_date=True)}"}
             }
             return cls._send_discord_http(token_or_url.strip(), "", embed=embed, timeout=8)
         return False, f"Unknown platform: {platform}"
 
     # -------------------------------------------------------------------------
-    # Event Notification Formatters
+    # Event Notification Formatters (Dual UTC & IST Timestamps)
     # -------------------------------------------------------------------------
     def notify_startup(self, account_id: int, server: str, mode: str, equity: float, balance: float,
-                       risk_pct: float, daily_dd: float, max_dd: float, symbols: list):
+                       risk_pct: float, daily_dd: float, max_dd: float, symbols: list,
+                       daily_cb: Optional[float] = None, max_cb: Optional[float] = None):
         """Notifies that the bot has started."""
         mode_tag = "DRY RUN (Paper)" if mode == "dry_run" else "LIVE EXECUTION"
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now_str = format_dual_time(include_date=True)
+
+        d_cb_str = f" | CB: -{daily_cb:.1f}%" if daily_cb is not None else ""
+        m_cb_str = f" | CB: -{max_cb:.1f}%" if max_cb is not None else ""
 
         tg_text = (
             f"🚀 <b>DCC BOT STARTED [{mode_tag}]</b>\n\n"
             f"• <b>Account:</b> {account_id} ({server})\n"
             f"• <b>Equity:</b> ${equity:,.2f} | <b>Balance:</b> ${balance:,.2f}\n"
             f"• <b>Risk/Trade:</b> {risk_pct:.1f}%\n"
-            f"• <b>Daily DD Limit:</b> -{daily_dd:.1f}% (3% Circuit Breaker)\n"
-            f"• <b>Max Total DD:</b> -{max_dd:.1f}%\n"
+            f"• <b>Daily DD Limit:</b> -{daily_dd:.1f}%{d_cb_str}\n"
+            f"• <b>Max Total DD:</b> -{max_dd:.1f}%{m_cb_str}\n"
             f"• <b>Assets:</b> {', '.join(symbols)}\n"
             f"• <b>Started:</b> {now_str}"
         )
@@ -178,8 +214,8 @@ class NotificationManager:
                 {"name": "Account", "value": f"{account_id} ({server})", "inline": True},
                 {"name": "Equity / Balance", "value": f"${equity:,.2f} / ${balance:,.2f}", "inline": True},
                 {"name": "Risk / Trade", "value": f"{risk_pct:.1f}%", "inline": True},
-                {"name": "Daily DD Breaker", "value": f"-{daily_dd:.1f}%", "inline": True},
-                {"name": "Max DD Breaker", "value": f"-{max_dd:.1f}%", "inline": True},
+                {"name": "Daily DD (Limit / CB)", "value": f"-{daily_dd:.1f}%" + (f" / -{daily_cb:.1f}%" if daily_cb else ""), "inline": True},
+                {"name": "Max DD (Limit / CB)", "value": f"-{max_dd:.1f}%" + (f" / -{max_cb:.1f}%" if max_cb else ""), "inline": True},
                 {"name": "Assets", "value": ", ".join(symbols), "inline": True}
             ],
             "footer": {"text": f"Started at {now_str}"}
@@ -187,7 +223,7 @@ class NotificationManager:
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
     def notify_shutdown(self, reason: str = "User Stopped"):
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now_str = format_dual_time(include_date=True)
         tg_text = f"🛑 <b>DCC BOT SHUTDOWN</b>\n\n• <b>Reason:</b> {reason}\n• <b>Time:</b> {now_str}"
         discord_embed = {
             "title": "🛑 DCC BOT SHUTDOWN",
@@ -198,7 +234,7 @@ class NotificationManager:
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
     def notify_session(self, session_name: str, status: str):
-        now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        now_str = format_dual_time(include_date=False)
         tg_text = f"⏰ <b>SESSION UPDATE: {session_name} {status}</b>\nTime: {now_str}"
         discord_embed = {
             "title": f"⏰ SESSION UPDATE: {session_name} {status}",
@@ -213,7 +249,7 @@ class NotificationManager:
         """Notifies that a new twin-ticket trade has been entered."""
         icon = "🟢" if direction == "BUY" else "🔴"
         mode_lbl = " [SIMULATED]" if is_dry_run else ""
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now_str = format_dual_time(include_date=True)
 
         tg_text = (
             f"{icon} <b>NEW TRADE ENTERED: {symbol} {direction}{mode_lbl}</b>\n\n"
@@ -243,7 +279,7 @@ class NotificationManager:
 
     def notify_tp1_breakeven(self, symbol: str, ticket_a: int, ticket_b: int, be_sl: float):
         """Notifies when Ticket A hits TP1 and Runner SL is moved to Breakeven."""
-        now_str = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        now_str = format_dual_time(include_date=False)
         tg_text = (
             f"🎯 <b>TARGET 1 HIT: {symbol} (+50% PROFIT LOCKED)</b>\n\n"
             f"• Ticket #{ticket_a} closed at TP1!\n"
@@ -262,7 +298,7 @@ class NotificationManager:
 
     def notify_trade_closed(self, symbol: str, ticket: int, exit_reason: str, pnl: float):
         """Notifies when an open position or runner is closed."""
-        now_str = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        now_str = format_dual_time(include_date=False)
         icon = "🚀" if pnl > 0 else ("🛡️" if abs(pnl) < 1.0 else "🛑")
         color = 0x00FF88 if pnl > 0 else (0x888888 if abs(pnl) < 1.0 else 0xFF4444)
 
@@ -284,34 +320,149 @@ class NotificationManager:
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
-    def notify_circuit_breaker(self, cb_type: str, current_equity: float, limit_pct: float, loss_amount: float):
+    def notify_circuit_breaker(self, cb_type: str, current_equity: float, limit_pct: float, loss_amount: float, hard_limit_pct: Optional[float] = None):
         """Emergency notification when a circuit breaker triggers."""
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now_str = format_dual_time(include_date=True)
+        hard_note = f" (Hard Limit: -{hard_limit_pct:.1f}%)" if hard_limit_pct is not None else ""
         if cb_type == "daily":
             tg_text = (
-                f"🚨 <b>DAILY CIRCUIT BREAKER TRIGGERED (-{limit_pct:.1f}%)</b> 🚨\n\n"
+                f"🚨 <b>DAILY CIRCUIT BREAKER TRIGGERED (-{limit_pct:.1f}%){hard_note}</b> 🚨\n\n"
                 f"• Current Equity: ${current_equity:,.2f}\n"
                 f"• Today's Loss: -${loss_amount:,.2f} (-{limit_pct:.1f}%)\n"
-                f"• <b>ACTION: Trading HALTED for remainder of day.</b> All setup arming disabled until 00:00 UTC.\n"
+                f"• <b>ACTION: Trading HALTED for remainder of day.</b> Account protected before hitting hard DD limit.\n"
                 f"• <b>Time:</b> {now_str}"
             )
             discord_embed = {
-                "title": f"🚨 DAILY CIRCUIT BREAKER TRIGGERED (-{limit_pct:.1f}%) 🚨",
-                "description": f"**Trading HALTED for the day until 00:00 UTC.**\nCurrent Equity: ${current_equity:,.2f} | Loss: -${loss_amount:,.2f}",
+                "title": f"🚨 DAILY CIRCUIT BREAKER TRIGGERED (-{limit_pct:.1f}%){hard_note} 🚨",
+                "description": f"**Trading HALTED for remainder of day.** Protected before hitting hard DD limit.\nCurrent Equity: ${current_equity:,.2f} | Loss: -${loss_amount:,.2f}",
                 "color": 0xFF9900,
                 "footer": {"text": f"Triggered at {now_str}"}
             }
         else:
             tg_text = (
-                f"🚨🚨 <b>EMERGENCY: MAX ACCOUNT DRAWDOWN (-{limit_pct:.1f}%) REACHED</b> 🚨🚨\n\n"
+                f"🚨🚨 <b>EMERGENCY: MAX ACCOUNT CIRCUIT BREAKER (-{limit_pct:.1f}%){hard_note} REACHED</b> 🚨🚨\n\n"
                 f"• Current Equity: ${current_equity:,.2f}\n"
-                f"• <b>ACTION: All positions liquidated. Bot permanently halted to protect capital.</b>\n"
+                f"• <b>ACTION: All positions liquidated. Bot permanently halted to protect against hard limit breach.</b>\n"
                 f"• <b>Time:</b> {now_str}"
             )
             discord_embed = {
-                "title": f"🚨🚨 EMERGENCY: MAX ACCOUNT DRAWDOWN (-{limit_pct:.1f}%) REACHED 🚨🚨",
-                "description": f"**All positions liquidated. Bot permanently halted to protect capital.**\nCurrent Equity: ${current_equity:,.2f}",
+                "title": f"🚨🚨 EMERGENCY: MAX ACCOUNT CIRCUIT BREAKER (-{limit_pct:.1f}%){hard_note} REACHED 🚨🚨",
+                "description": f"**All positions liquidated. Bot permanently halted before hitting hard DD limit.**\nCurrent Equity: ${current_equity:,.2f}",
                 "color": 0xFF0000,
                 "footer": {"text": f"Triggered at {now_str}"}
             }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_news_shield_activated(self, title: str, country: str, release_time_str: str, resume_time_str: str):
+        """Notifies when the High-Impact News Shield is activated (15m before news)."""
+        now_str = format_dual_time(include_date=False)
+        rel_dual = format_dual_hhmm(release_time_str)
+        res_dual = format_dual_hhmm(resume_time_str)
+        tg_text = (
+            f"⚠️ <b>HIGH-IMPACT NEWS SHIELD ACTIVATED</b>\n\n"
+            f"• <b>Event:</b> {country} - {title}\n"
+            f"• <b>Release Time:</b> {rel_dual}\n"
+            f"• <b>Trading Suspended:</b> 15m before & after news\n"
+            f"• <b>Resumes At:</b> {res_dual}\n"
+            f"• <b>Status:</b> All trade arming paused to protect against news spread spikes.\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+        discord_embed = {
+            "title": f"⚠️ HIGH-IMPACT NEWS SHIELD ACTIVATED ({country})",
+            "description": f"**Event:** {country} - {title}\n**Release Time:** {rel_dual}\n**Trading Suspended:** Until {res_dual} (15m before & after)",
+            "color": 0xFFAA00,
+            "fields": [
+                {"name": "Impact", "value": "HIGH (Red Folder)", "inline": True},
+                {"name": "Status", "value": "Trade Arming Paused", "inline": True},
+                {"name": "Resumes", "value": res_dual, "inline": True}
+            ],
+            "footer": {"text": f"Activated at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_news_shield_lifted(self, title: str, resume_time_str: str):
+        """Notifies when the High-Impact News Shield is lifted (15m after news)."""
+        now_str = format_dual_time(include_date=False)
+        res_dual = format_dual_hhmm(resume_time_str)
+        tg_text = (
+            f"✅ <b>HIGH-IMPACT NEWS SHIELD LIFTED</b>\n\n"
+            f"• <b>Event Passed:</b> {title}\n"
+            f"• <b>Resumed At:</b> {res_dual}\n"
+            f"• <b>Status:</b> Normal market surveillance and trade execution restored.\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+        discord_embed = {
+            "title": "✅ HIGH-IMPACT NEWS SHIELD LIFTED",
+            "description": f"**Event Passed:** {title}\n**Resumed At:** {res_dual}\n**Status:** Trading resumed. Normal market surveillance restored.",
+            "color": 0x00FF88,
+            "footer": {"text": f"Lifted at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_setup_armed(self, symbol: str, direction: str, planned_entry: float, planned_sl: float,
+                           planned_tp1: float, planned_lots: float, reason: str, bar_time: Optional[datetime] = None):
+        """Notifies when a high-probability DCC candidate setup is armed on 5M close."""
+        now_str = format_dual_time(include_date=False)
+        bar_str = format_dual_time(bar_time, include_date=False) if bar_time else ""
+        icon = "🎯"
+        dir_icon = "🟢" if direction == "BUY" else "🔴"
+        digits = 2 if "XAU" in symbol else 1
+
+        bar_line = f"• <b>Bar Close (5M):</b> {bar_str}\n" if bar_str else ""
+
+        tg_text = (
+            f"{icon} <b>SETUP ARMED: {symbol} {direction} {dir_icon}</b>\n\n"
+            f"{bar_line}"
+            f"• <b>Condition:</b> {reason}\n"
+            f"• <b>Planned Entry:</b> {planned_entry:.{digits}f}\n"
+            f"• <b>Planned SL:</b> {planned_sl:.{digits}f}\n"
+            f"• <b>Planned TP1:</b> {planned_tp1:.{digits}f}\n"
+            f"• <b>Calculated Volume:</b> {planned_lots} lots\n"
+            f"• <b>Action:</b> Streaming live ticks in final 2 minutes for breakout confirmation...\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+        fields = [
+            {"name": "Planned Entry", "value": f"{planned_entry:.{digits}f}", "inline": True},
+            {"name": "Planned SL", "value": f"{planned_sl:.{digits}f}", "inline": True},
+            {"name": "Planned TP1", "value": f"{planned_tp1:.{digits}f}", "inline": True},
+            {"name": "Volume", "value": f"{planned_lots} lots", "inline": True},
+            {"name": "Trigger Condition", "value": "Projected EMA9/20 Flip + Clean Spread", "inline": True}
+        ]
+        if bar_str:
+            fields.insert(0, {"name": "Bar Close (5M)", "value": bar_str, "inline": True})
+
+        discord_embed = {
+            "title": f"{icon} SETUP ARMED: {symbol} {direction} {dir_icon}",
+            "description": f"**Setup Confirmed:** {reason}\n*Streaming ticks in final 2 mins for breakout trigger...*",
+            "color": 0x33CCFF,
+            "fields": fields,
+            "footer": {"text": f"Armed at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_setup_aborted(self, symbol: str, direction: str, abort_reason: str,
+                             last_price: float, last_spread: float):
+        """Notifies when an armed setup fails to trigger and is safely dropped."""
+        now_str = format_dual_time(include_date=False)
+        digits = 2 if "XAU" in symbol else 1
+
+        tg_text = (
+            f"❌ <b>ARMED SETUP DROPPED: {symbol} {direction}</b>\n\n"
+            f"• <b>Reason for Dropping:</b> {abort_reason}\n"
+            f"• <b>Price at Boundary:</b> {last_price:.{digits}f} (Spread: {last_spread:.2f})\n"
+            f"• <b>Action:</b> Order NOT placed. Capital safely preserved.\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+        discord_embed = {
+            "title": f"❌ ARMED SETUP DROPPED: {symbol} {direction}",
+            "description": f"**Trade Aborted:** {abort_reason}\n*Order was NOT placed. Account capital safely preserved.*",
+            "color": 0xFF8800,
+            "fields": [
+                {"name": "Symbol", "value": symbol, "inline": True},
+                {"name": "Direction", "value": direction, "inline": True},
+                {"name": "Spread at Close", "value": f"{last_spread:.2f}", "inline": True}
+            ],
+            "footer": {"text": f"Dropped at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+

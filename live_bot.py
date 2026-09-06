@@ -29,7 +29,11 @@ import pandas as pd
 
 from dcc_engine import DCCEngine, SignalType, TradeSignal
 from mt5_data import MT5DataProvider
+from news_engine import NewsEngine
 from notifier import NotificationManager
+from rich.console import Console
+from rich.live import Live
+from rich.text import Text
 
 
 @dataclass
@@ -167,8 +171,69 @@ class MarketAuditLogger:
 CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_accounts_config.json")
 
 
+def prompt_circuit_breakers(daily_dd: float, max_dd: float, default_auto: bool = True) -> Tuple[float, float]:
+    """
+    Configures Circuit Breakers with either:
+    1. Auto-configure (-1.0% safety cushion before hard DD limits)
+    2. Custom manual entry with strict validation: Circuit Breaker MUST be strictly less than Hard DD Limit.
+    """
+    auto_daily_cb = round(max(0.1, daily_dd - 1.0), 2)
+    auto_max_cb = round(max(0.1, max_dd - 1.0), 2)
+
+    print("\n--- CIRCUIT BREAKER SAFETY CONFIGURATION ---")
+    print(f"Hard Account Drawdown Limits: Daily DD: {daily_dd:.1f}% | Max Total DD: {max_dd:.1f}% (Broker / Prop Firm Rule)")
+    print("The Circuit Breaker halts the bot BEFORE reaching your hard limits to protect your capital from breaching.")
+    print(f"  [1] Auto-configure (-1.0% safety cushion) -> Daily CB: {auto_daily_cb:.1f}%, Max CB: {auto_max_cb:.1f}% (Recommended)")
+    print("  [2] Enter manual Circuit Breaker values (Custom)")
+
+    choice = input("Select option [1-2] (Press Enter for [1]): ").strip()
+    if not choice or choice == "1":
+        print(f"\n[AUTO-CONFIGURED] Circuit Breakers set to: Daily CB: {auto_daily_cb:.1f}% | Max CB: {auto_max_cb:.1f}% (-1.0% safety buffer before hard limits)")
+        return auto_daily_cb, auto_max_cb
+
+    # Manual Input with Strict Validation (CB MUST be strictly less than DD limit!)
+    while True:
+        d_cb_in = input(f"Enter Daily Circuit Breaker % [Must be < {daily_dd:.1f}%, Default: {auto_daily_cb:.1f}%]: ").strip()
+        if not d_cb_in:
+            chosen_daily_cb = auto_daily_cb
+            break
+        try:
+            val = float(d_cb_in)
+            if val <= 0:
+                print("[ERROR] Daily Circuit Breaker must be greater than 0%. Please try again.")
+                continue
+            if val >= daily_dd:
+                print(f"[ERROR] Invalid! Circuit Breaker ({val:.1f}%) cannot be greater than or equal to Daily DD Limit ({daily_dd:.1f}%). Circuit Breaker must be strictly less than the hard limit to protect it! Please try again.")
+                continue
+            chosen_daily_cb = round(val, 2)
+            break
+        except ValueError:
+            print("[ERROR] Please enter a valid numeric percentage.")
+
+    while True:
+        m_cb_in = input(f"Enter Max Total Circuit Breaker % [Must be < {max_dd:.1f}%, Default: {auto_max_cb:.1f}%]: ").strip()
+        if not m_cb_in:
+            chosen_max_cb = auto_max_cb
+            break
+        try:
+            val = float(m_cb_in)
+            if val <= 0:
+                print("[ERROR] Max Circuit Breaker must be greater than 0%. Please try again.")
+                continue
+            if val >= max_dd:
+                print(f"[ERROR] Invalid! Circuit Breaker ({val:.1f}%) cannot be greater than or equal to Max Total DD Limit ({max_dd:.1f}%). Circuit Breaker must be strictly less than the hard limit to protect it! Please try again.")
+                continue
+            chosen_max_cb = round(val, 2)
+            break
+        except ValueError:
+            print("[ERROR] Please enter a valid numeric percentage.")
+
+    print(f"\n[CONFIGURED] Circuit Breakers set to: Daily CB: {chosen_daily_cb:.1f}% | Max CB: {chosen_max_cb:.1f}%")
+    return chosen_daily_cb, chosen_max_cb
+
+
 class AccountConfigManager:
-    """Persistent storage for per-account Risk, Daily DD, Max DD, and High-Water Mark."""
+    """Persistent storage for per-account Risk, Daily DD, Max DD, Circuit Breakers, and High-Water Mark."""
     def __init__(self, config_path: str = CONFIG_FILE_PATH):
         self.config_path = config_path
         self.accounts: Dict[str, Dict] = self._load()
@@ -193,6 +258,7 @@ class AccountConfigManager:
         acc_id = str(account_info.login)
         if acc_id in self.accounts:
             cfg = self.accounts[acc_id]
+            needs_save = False
             if "notifications" not in cfg:
                 cfg["notifications"] = {
                     "active_platform": "none",
@@ -200,13 +266,24 @@ class AccountConfigManager:
                     "telegram_chat_id": "",
                     "discord_webhook_url": ""
                 }
-                self.save()
+                needs_save = True
             if "use_liquidity_sweep" not in cfg:
                 cfg["use_liquidity_sweep"] = True
-                self.save()
+                needs_save = True
+            if "use_news_shield" not in cfg:
+                cfg["use_news_shield"] = True
+                needs_save = True
+            if "daily_cb_pct" not in cfg:
+                cfg["daily_cb_pct"] = round(max(0.1, cfg.get("daily_dd_limit_pct", 4.0) - 1.0), 2)
+                needs_save = True
+            if "max_cb_pct" not in cfg:
+                cfg["max_cb_pct"] = round(max(0.1, cfg.get("max_total_dd_pct", 8.0) - 1.0), 2)
+                needs_save = True
             # Track peak high-water mark
             if account_info.equity > cfg.get("high_water_mark", 0.0):
                 cfg["high_water_mark"] = round(float(account_info.equity), 2)
+                needs_save = True
+            if needs_save:
                 self.save()
             return cfg
 
@@ -215,19 +292,24 @@ class AccountConfigManager:
         print(f"  >>> [NEW MT5 ACCOUNT DETECTED: {acc_id} ({account_info.server})] <<<")
         print("=" * 80)
         print(f"Equity: ${account_info.equity:,.2f} | Balance: ${account_info.balance:,.2f} | Leverage: 1:{account_info.leverage}")
-        print("Let's configure the Risk & Drawdown Circuit Breakers for this account:\n")
+        print("Let's configure the Risk, Drawdown Limits & Circuit Breakers for this account:\n")
 
         if auto_defaults:
-            daily_dd = 3.0
+            daily_dd = 4.0
+            daily_cb = 3.0
             max_dd = 8.0
+            max_cb = 7.0
             risk_pct = 1.0
-            print(f"  [Auto-Assigned Defaults] Daily DD: {daily_dd}%, Max DD: {max_dd}%, Risk: {risk_pct}%")
+            print(f"  [Auto-Assigned Defaults] Daily DD Limit: {daily_dd}%, Max DD Limit: {max_dd}%, Risk: {risk_pct}%")
+            print(f"  [Auto-Configured Circuit Breakers] Daily CB: {daily_cb}% | Max CB: {max_cb}% (-1.0% safety cushion before hard limits)")
         else:
-            daily_in = input("Enter Daily Drawdown Limit % [Press Enter for Default 3.0%]: ").strip()
-            daily_dd = float(daily_in) if daily_in else 3.0
+            daily_in = input("Enter Daily Drawdown Hard Limit % (Prop firm / Broker max) [Default 4.0%]: ").strip()
+            daily_dd = float(daily_in) if daily_in else 4.0
 
-            max_in = input("Enter Maximum Total Drawdown Limit % [Press Enter for Default 8.0%]: ").strip()
+            max_in = input("Enter Maximum Total Drawdown Hard Limit % (Prop firm / Broker max) [Default 8.0%]: ").strip()
             max_dd = float(max_in) if max_in else 8.0
+
+            daily_cb, max_cb = prompt_circuit_breakers(daily_dd, max_dd)
 
             risk_in = input("Enter Risk Per Trade % [Press Enter for Default 1.0%]: ").strip()
             risk_pct = float(risk_in) if risk_in else 1.0
@@ -238,10 +320,13 @@ class AccountConfigManager:
             "currency": str(account_info.currency),
             "risk_per_trade": round(risk_pct / 100.0, 4),
             "daily_dd_limit_pct": round(daily_dd, 2),
+            "daily_cb_pct": round(daily_cb, 2),
             "max_total_dd_pct": round(max_dd, 2),
+            "max_cb_pct": round(max_cb, 2),
             "symbols": ["XAUUSD", "NAS100"],
             "high_water_mark": round(float(account_info.equity), 2),
             "use_liquidity_sweep": True,
+            "use_news_shield": True,
             "notifications": {
                 "active_platform": "none",
                 "telegram_bot_token": "",
@@ -256,14 +341,30 @@ class AccountConfigManager:
         print(f"\n[SAVED] Settings permanently remembered for Account {acc_id} in bot_accounts_config.json!\n")
         return cfg
 
-    def update_account_rules(self, acc_id: str, risk_pct: float, daily_dd: float, max_dd: float):
+    def update_account_rules(
+        self,
+        acc_id: str,
+        risk_pct: float,
+        daily_dd: float,
+        max_dd: float,
+        daily_cb: Optional[float] = None,
+        max_cb: Optional[float] = None
+    ):
         if acc_id in self.accounts:
+            if daily_cb is None:
+                daily_cb = max(0.1, daily_dd - 1.0)
+            if max_cb is None:
+                max_cb = max(0.1, max_dd - 1.0)
             self.accounts[acc_id]["risk_per_trade"] = round(risk_pct / 100.0, 4)
             self.accounts[acc_id]["daily_dd_limit_pct"] = round(daily_dd, 2)
+            self.accounts[acc_id]["daily_cb_pct"] = round(daily_cb, 2)
             self.accounts[acc_id]["max_total_dd_pct"] = round(max_dd, 2)
+            self.accounts[acc_id]["max_cb_pct"] = round(max_cb, 2)
             self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
             self.save()
             print(f"\n[SUCCESS] Updated rules for Account {acc_id} successfully!")
+            print(f"  * Hard DD Limits:        Daily: {daily_dd:.1f}% | Max Total: {max_dd:.1f}%")
+            print(f"  * Circuit Breakers (CB): Daily: {daily_cb:.1f}% | Max Total: {max_cb:.1f}% (Halts trading before hitting hard limits)\n")
 
     def get_notification_config(self, acc_id: str) -> Dict:
         if acc_id in self.accounts:
@@ -310,31 +411,75 @@ class AccountConfigManager:
             return not curr
         return True
 
+    def toggle_news_shield(self, acc_id: str) -> bool:
+        if acc_id in self.accounts:
+            curr = self.accounts[acc_id].get("use_news_shield", True)
+            self.accounts[acc_id]["use_news_shield"] = not curr
+            self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+            self.save()
+            return not curr
+        return True
+
 
 class InstitutionalDCCBot:
     def __init__(
         self,
         symbols: List[str] = ["XAUUSD", "NAS100"],
         risk_per_trade: float = 0.01,
-        daily_loss_limit_pct: float = 3.0,
+        daily_loss_limit_pct: Optional[float] = None,
+        daily_dd_limit_pct: float = 4.0,
+        daily_cb_pct: Optional[float] = None,
         max_total_dd_pct: float = 8.0,
+        max_cb_pct: Optional[float] = None,
         high_water_mark: float = 0.0,
         config_mgr: Optional['AccountConfigManager'] = None,
         dry_run: bool = False,
         use_liquidity_sweep: bool = True,
+        use_news_shield: bool = True,
     ):
         self.symbols = symbols
         self.risk_per_trade = risk_per_trade
-        self.daily_loss_limit_pct = daily_loss_limit_pct
-        self.max_total_dd_pct = max_total_dd_pct
+
+        # Configure Hard DD Limits & Circuit Breakers (-1% safety cushion)
+        self.daily_dd_limit_pct = float(daily_dd_limit_pct)
+        if daily_cb_pct is not None:
+            self.daily_cb_pct = float(daily_cb_pct)
+        elif daily_loss_limit_pct is not None:
+            self.daily_cb_pct = float(daily_loss_limit_pct)
+        else:
+            self.daily_cb_pct = round(max(0.1, self.daily_dd_limit_pct - 1.0), 2)
+
+        self.max_total_dd_pct = float(max_total_dd_pct)
+        if max_cb_pct is not None:
+            self.max_cb_pct = float(max_cb_pct)
+        else:
+            self.max_cb_pct = round(max(0.1, self.max_total_dd_pct - 1.0), 2)
+
+        # Backwards compatibility alias: halt threshold
+        self.daily_loss_limit_pct = self.daily_cb_pct
         self.high_water_mark = high_water_mark
         self.config_mgr = config_mgr
         self.dry_run = dry_run
         self.use_liquidity_sweep = use_liquidity_sweep
+        self.use_news_shield = use_news_shield
+        self.news_engine = NewsEngine(cache_dir=self.config_mgr.config_path if False else None)
+        self.active_news_shield: Optional[Dict] = None
+        self.notified_news_activations: set = set()
+        self.notified_news_lifted: set = set()
+        self.notified_armed_setups: Dict[str, datetime] = {}
         self.notifier = NotificationManager()
         self.session_notified: Dict[str, bool] = {}
         self.audit_logger = MarketAuditLogger()
+        self.console = Console(highlight=False, soft_wrap=True)
         self.spinner_frames = ["[|]", "[/]", "[-]", "[\\]"]
+        self.spinner_colors = [
+            "bold bright_cyan",
+            "bold cyan",
+            "bold bright_green",
+            "bold green",
+            "bold bright_yellow",
+            "bold bright_magenta",
+        ]
         self.spinner_idx = 0
         self.tz_ist = timezone(timedelta(hours=5, minutes=30))
 
@@ -399,14 +544,22 @@ class InstitutionalDCCBot:
         print(f"Equity / Balance:        ${account.equity:,.2f} / ${account.balance:,.2f}")
         print(f"Peak Equity (HWM):       ${self.high_water_mark:,.2f}")
         print(f"Daily Starting Equity:   ${self.daily_starting_equity:,.2f}")
-        print(f"Daily DD Circuit Breaker: -{self.daily_loss_limit_pct:.1f}% (Halt if daily equity <= ${self.daily_starting_equity * (1.0 - self.daily_loss_limit_pct / 100.0):,.2f})")
-        print(f"Max Account DD Breaker:   -{self.max_total_dd_pct:.1f}% (Emergency halt if equity <= ${self.high_water_mark * (1.0 - self.max_total_dd_pct / 100.0):,.2f})")
+        daily_cb_equity = self.daily_starting_equity * (1.0 - self.daily_cb_pct / 100.0)
+        daily_hard_equity = self.daily_starting_equity * (1.0 - self.daily_dd_limit_pct / 100.0)
+        print(f"Daily DD (Hard Limit):   -{self.daily_dd_limit_pct:.1f}% (${daily_hard_equity:,.2f}) [Broker / Prop Firm Rule]")
+        print(f"Daily Circuit Breaker:   -{self.daily_cb_pct:.1f}% (HALT trading if equity <= ${daily_cb_equity:,.2f} | {self.daily_dd_limit_pct - self.daily_cb_pct:.1f}% safety cushion)")
+        max_cb_equity = self.high_water_mark * (1.0 - self.max_cb_pct / 100.0)
+        max_hard_equity = self.high_water_mark * (1.0 - self.max_total_dd_pct / 100.0)
+        print(f"Max DD (Hard Limit):     -{self.max_total_dd_pct:.1f}% (${max_hard_equity:,.2f}) [Broker / Prop Firm Rule]")
+        print(f"Max Circuit Breaker:     -{self.max_cb_pct:.1f}% (Emergency halt if equity <= ${max_cb_equity:,.2f} | {self.max_total_dd_pct - self.max_cb_pct:.1f}% safety cushion)")
         print(f"Leverage:                1:{account.leverage}")
         print(f"Monitored Assets:        {', '.join(self.symbols)}")
         print(f"Risk Per Trade:          {self.risk_per_trade * 100:.1f}%")
         print(f"Execution Mode:          {'DRY RUN (Paper Mode)' if self.dry_run else 'LIVE ORDER EXECUTION'}")
         sweep_str = "ENABLED (Turtle Soup Filter)" if self.use_liquidity_sweep else "DISABLED (Standard Baseline)"
         print(f"5M Liquidity Sweep:      {sweep_str}")
+        news_str = "ENABLED (15m Blackout around USD High-Impact News)" if self.use_news_shield else "DISABLED (Off)"
+        print(f"High-Impact News Shield: {news_str}")
         
         plat = self.notifier.active_platform
         if plat == "telegram":
@@ -425,9 +578,11 @@ class InstitutionalDCCBot:
             equity=account.equity,
             balance=account.balance,
             risk_pct=self.risk_per_trade * 100.0,
-            daily_dd=self.daily_loss_limit_pct,
+            daily_dd=self.daily_dd_limit_pct,
             max_dd=self.max_total_dd_pct,
-            symbols=self.symbols
+            symbols=self.symbols,
+            daily_cb=self.daily_cb_pct,
+            max_cb=self.max_cb_pct
         )
 
         return True
@@ -588,6 +743,11 @@ class InstitutionalDCCBot:
         c_time_str = c_time.strftime("%Y-%m-%d %H:%M:%S")
         ist_time_str = c_time.astimezone(self.tz_ist).strftime("%Y-%m-%d %H:%M:%S")
 
+        # 1H Timeframe Context bar
+        h1_time = df_1h.index[-1]
+        h1_time_str = h1_time.strftime("%Y-%m-%d %H:%M")
+        h1_ist_str = h1_time.astimezone(self.tz_ist).strftime("%H:%M")
+
         open_p = float(closed_bar['open'])
         high_p = float(closed_bar['high'])
         low_p = float(closed_bar['low'])
@@ -635,10 +795,18 @@ class InstitutionalDCCBot:
         planned_lots = 0.0
         direction = 0
 
+        # Check if an armed setup on this symbol was not executed and is now expiring
+        prev_state = self.armed_states[symbol]
+        if prev_state.is_armed and prev_state.armed_bar_time != c_time:
+            dir_str = "BUY" if prev_state.direction == 1 else "SELL"
+            abort_msg = "Candle closed without breakout trigger execution"
+            self.notifier.notify_setup_aborted(symbol, dir_str, abort_msg, close_p, 0.0)
+            self.armed_states[symbol].is_armed = False
+
         # 1. Circuit breaker check
         if self.circuit_breaker_active:
             decision = "BLOCKED_CIRCUIT_BREAKER"
-            reason = f"Daily -{self.daily_loss_limit_pct:.1f}% Circuit Breaker is ACTIVE"
+            reason = f"Daily -{self.daily_cb_pct:.1f}% Circuit Breaker is ACTIVE (Hard Limit: -{self.daily_dd_limit_pct:.1f}%)"
             self.armed_states[symbol].is_armed = False
         # 2. Existing position check
         elif open_pos and len(open_pos) > 0:
@@ -650,7 +818,13 @@ class InstitutionalDCCBot:
             decision = "SKIPPED_DEAD_HOUR"
             reason = f"Dead Trap Hour Filter Active ({now_utc.hour:02d}:00 UTC)"
             self.armed_states[symbol].is_armed = False
-        # 4. ADX threshold check
+        # 4. High-Impact News Shield Check (15m before & after USD news)
+        elif self.use_news_shield and self.news_engine.get_active_news_shield(now_utc):
+            active_shield = self.news_engine.get_active_news_shield(now_utc)
+            decision = "PAUSED_HIGH_IMPACT_NEWS"
+            reason = f"High-Impact {active_shield['country']} News ({active_shield['title']}) at {active_shield['event_time_str']} UTC. Shield active until {active_shield['resume_time_str']} UTC"
+            self.armed_states[symbol].is_armed = False
+        # 5. ADX threshold check
         elif adx < cfg.adx_min:
             decision = "SKIPPED_LOW_ADX"
             reason = f"1H ADX ({adx:.1f}) < min threshold ({cfg.adx_min:.1f})"
@@ -744,6 +918,22 @@ class InstitutionalDCCBot:
                 runner_lots=r_lots
             )
 
+            # Dispatch remote Setup Armed Alert
+            armed_key = f"{symbol}_{c_time_str}"
+            if armed_key not in self.notified_armed_setups:
+                self.notified_armed_setups[armed_key] = datetime.now(timezone.utc)
+                dir_str = "BUY" if direction == 1 else "SELL"
+                self.notifier.notify_setup_armed(
+                    symbol=symbol,
+                    direction=dir_str,
+                    planned_entry=planned_entry,
+                    planned_sl=planned_sl,
+                    planned_tp1=planned_tp1,
+                    planned_lots=tot_lots,
+                    reason=reason,
+                    bar_time=c_time
+                )
+
         # Log complete calculation record to CSV and surveillance log
         log_record = {
             "timestamp_utc": c_time_str,
@@ -788,7 +978,7 @@ class InstitutionalDCCBot:
         sweep_str = f"CONFIRMED (Swept {sweep_lvl:.{digits}f} by {pts:.{digits}f} pts)" if has_sweep else "NO SWEEP"
         
         print("\n" + "=" * 80)
-        print(f"  [5M CANDLE EVALUATION AUDIT] {symbol} | {c_time_str} UTC ({ist_time_str} IST)")
+        print(f"  [CANDLE EVALUATION AUDIT] {symbol} | 5M: {c_time.strftime('%H:%M')} UTC ({c_time.astimezone(self.tz_ist).strftime('%H:%M')} IST) | 1H: {h1_time.strftime('%H:%M')} UTC ({h1_ist_str} IST)")
         print("=" * 80)
         print(f"  * Candle OHLC:    Open: {open_p:.{digits}f} | High: {high_p:.{digits}f} | Low: {low_p:.{digits}f} | Close: {close_p:.{digits}f} | Vol: {int(vol):,}")
         print(f"  * 5M Indicators:  EMA9: {m5_e9:.{digits}f} | EMA20: {m5_e20:.{digits}f} | Gap: {ema_gap:.{digits}f} ({ema_gap_ratio:.2f}x ATR) | VWAP: {vwap:.{digits}f}")
@@ -809,11 +999,52 @@ class InstitutionalDCCBot:
             return
 
         state = self.armed_states[symbol]
-        clean_tick = self.get_clean_tick(symbol)
-        if clean_tick is None:
-            return  # Skip bad/None tick without error
 
-        bid, ask, spread = clean_tick
+        # 1. News shield check during countdown
+        if self.use_news_shield:
+            active_shield = self.news_engine.get_active_news_shield(datetime.now(timezone.utc))
+            if active_shield:
+                dir_str = "BUY" if state.direction == 1 else "SELL"
+                abort_reason = f"High-Impact News Shield activated ({active_shield['title']} at {active_shield['event_time_str']} UTC)"
+                print(f"\n[SETUP ABORTED] {symbol} {dir_str} cancelled: {abort_reason}")
+                self.notifier.notify_setup_aborted(symbol, dir_str, abort_reason, 0.0, 0.0)
+                state.is_armed = False
+                return
+
+        # 2. Fetch raw tick and check for valid tick & spread spike
+        try:
+            raw_tick = mt5.symbol_info_tick(symbol)
+        except Exception:
+            raw_tick = None
+
+        if raw_tick is None:
+            if seconds_left <= 0.25:
+                dir_str = "BUY" if state.direction == 1 else "SELL"
+                abort_msg = "MT5 returned null tick at 0.0s bar close"
+                print(f"\n[SETUP ABORTED] {symbol} {dir_str} cancelled: {abort_msg}")
+                self.notifier.notify_setup_aborted(symbol, dir_str, abort_msg, 0.0, 0.0)
+                state.is_armed = False
+            return
+
+        bid = float(raw_tick.bid)
+        ask = float(raw_tick.ask)
+        if bid <= 0.0 or ask <= 0.0 or ask < bid:
+            return
+
+        spread = ask - bid
+        cfg = CONFIGS[symbol]
+
+        if spread > cfg.max_allowed_spread:
+            # Spread spike detected (e.g. news or rollover)
+            if seconds_left <= 0.25:
+                dir_str = "BUY" if state.direction == 1 else "SELL"
+                ref_p = ask if state.direction == 1 else bid
+                abort_msg = f"Spread spiked to {spread:.2f} > max limit {cfg.max_allowed_spread:.2f}"
+                print(f"\n[SETUP ABORTED] {symbol} {dir_str} cancelled: {abort_msg}")
+                self.notifier.notify_setup_aborted(symbol, dir_str, abort_msg, ref_p, spread)
+                state.is_armed = False
+            return
+
         ref_price = ask if state.direction == 1 else bid
 
         # Zero-allocation recursive float EMA projection
@@ -835,11 +1066,35 @@ class InstitutionalDCCBot:
             status = "FLIP HOLDING" if is_flip_valid else "FLIP FAILING"
             print(f"[{symbol} TICK MONITOR] T-{sec_int:02d}s | Price: {ref_price:.2f} | Spread: {spread:.2f} | E9 vs E20: ({proj_e9:.2f} / {proj_e20:.2f}) -> [{status}]")
 
-        # Zero-Latency Fire at Candle Boundary (< 0.25s to close)
-        if seconds_left <= 0.25 and is_flip_valid:
-            print(f"\n>>> [0.0s BAR CLOSE CONFIRMED] FIRING ZERO-LATENCY TWIN ORDERS ON {symbol}! <<<")
-            self.execute_twin_orders(symbol, state, ref_price, spread)
-            state.is_armed = False  # Reset armed state
+        # Zero-Latency Fire or Abort at Candle Boundary (< 0.25s to close)
+        if seconds_left <= 0.25:
+            if is_flip_valid:
+                print(f"\n>>> [0.0s BAR CLOSE CONFIRMED] FIRING ZERO-LATENCY TWIN ORDERS ON {symbol}! <<<")
+                self.execute_twin_orders(symbol, state, ref_price, spread)
+                state.is_armed = False  # Reset armed state
+            else:
+                dir_str = "BUY" if state.direction == 1 else "SELL"
+                reasons = []
+                if state.direction == 1:
+                    if proj_e9 <= proj_e20:
+                        reasons.append(f"EMA9 ({proj_e9:.2f}) <= EMA20 ({proj_e20:.2f})")
+                    if ref_price <= state.vwap_5m:
+                        reasons.append(f"Price below VWAP ({ref_price:.2f} <= {state.vwap_5m:.2f})")
+                    if ref_price <= state.h1_e20:
+                        reasons.append(f"Price below 1H EMA20 ({ref_price:.2f} <= {state.h1_e20:.2f})")
+                else:
+                    if proj_e9 >= proj_e20:
+                        reasons.append(f"EMA9 ({proj_e9:.2f}) >= EMA20 ({proj_e20:.2f})")
+                    if ref_price >= state.vwap_5m:
+                        reasons.append(f"Price above VWAP ({ref_price:.2f} >= {state.vwap_5m:.2f})")
+                    if ref_price >= state.h1_e20:
+                        reasons.append(f"Price above 1H EMA20 ({ref_price:.2f} >= {state.h1_e20:.2f})")
+
+                failure_detail = ", ".join(reasons) if reasons else "Flip conditions unmet"
+                abort_msg = f"0.0s Bar Close Flip Failed: {failure_detail}"
+                print(f"\n[SETUP ABORTED] {symbol} {dir_str} cancelled at bar close: {abort_msg}")
+                self.notifier.notify_setup_aborted(symbol, dir_str, abort_msg, ref_price, spread)
+                state.is_armed = False
 
     def execute_twin_orders(self, symbol: str, state: PreArmedState, entry_price: float, spread: float):
         sym_info = mt5.symbol_info(symbol)
@@ -1024,6 +1279,8 @@ class InstitutionalDCCBot:
         print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
         print(f"Logging System: Live calculations saved to {self.audit_logger.log_dir}/market_calculations_YYYYMMDD.csv\n")
 
+        self.live = Live(console=self.console, refresh_per_second=4, transient=False)
+        self.live.start()
         try:
             while True:
                 now_utc = datetime.now(timezone.utc)
@@ -1061,16 +1318,16 @@ class InstitutionalDCCBot:
                     # B. Layer 2: Maximum Total Drawdown Circuit Breaker
                     if self.high_water_mark > 0:
                         total_dd_pct = (self.high_water_mark - current_equity) / self.high_water_mark * 100.0
-                        if total_dd_pct >= self.max_total_dd_pct:
-                            sys.stdout.write("\n")
+                        if total_dd_pct >= self.max_cb_pct:
                             print("\n" + "!" * 80)
-                            print(f"[🚨 EMERGENCY: MAX ACCOUNT DRAWDOWN -{total_dd_pct:.2f}% REACHED 🚨]")
-                            print(f"High-Water Mark:   ${self.high_water_mark:,.2f}")
-                            print(f"Current Equity:    ${current_equity:,.2f}")
-                            print(f"Max Limit Allowed: -{self.max_total_dd_pct:.2f}%")
+                            print(f"[!! EMERGENCY: MAX ACCOUNT CIRCUIT BREAKER -{total_dd_pct:.2f}% TRIGGERED !!]")
+                            print(f"High-Water Mark:       ${self.high_water_mark:,.2f}")
+                            print(f"Current Equity:        ${current_equity:,.2f}")
+                            print(f"Circuit Breaker Level: -{self.max_cb_pct:.2f}% (Hard Limit: -{self.max_total_dd_pct:.2f}%)")
+                            print(f"Safety Cushion Saved:  {self.max_total_dd_pct - self.max_cb_pct:.1f}% capital buffer before hard prop firm breach")
                             print("ACTION: Emergency close on all positions. Bot permanently halted to protect capital.")
                             print("!" * 80 + "\n")
-                            self.notifier.notify_circuit_breaker("max_total", current_equity, self.max_total_dd_pct, self.high_water_mark - current_equity)
+                            self.notifier.notify_circuit_breaker("max_total", current_equity, self.max_cb_pct, self.high_water_mark - current_equity, hard_limit_pct=self.max_total_dd_pct)
                             self.emergency_close_all()
                             break
 
@@ -1078,21 +1335,60 @@ class InstitutionalDCCBot:
                     if self.daily_starting_equity > 0:
                         daily_pnl = current_equity - self.daily_starting_equity
                         daily_dd_pct = (self.daily_starting_equity - current_equity) / self.daily_starting_equity * 100.0
-                        if daily_dd_pct >= self.daily_loss_limit_pct and not self.circuit_breaker_active:
+                        if daily_dd_pct >= self.daily_cb_pct and not self.circuit_breaker_active:
                             self.circuit_breaker_active = True
-                            sys.stdout.write("\n")
                             print("\n" + "!" * 80)
-                            print(f"[🚨 DAILY {self.daily_loss_limit_pct:.1f}% CIRCUIT BREAKER TRIGGERED 🚨]")
+                            print(f"[!! DAILY {self.daily_cb_pct:.1f}% CIRCUIT BREAKER TRIGGERED !!]")
                             print(f"Daily Starting Equity: ${self.daily_starting_equity:,.2f}")
                             print(f"Current Equity:        ${current_equity:,.2f}")
-                            print(f"Daily Drawdown:        -{daily_dd_pct:.2f}% (Limit: -{self.daily_loss_limit_pct:.2f}%) | Loss: -${abs(daily_pnl):,.2f}")
+                            print(f"Daily Drawdown:        -{daily_dd_pct:.2f}% (Circuit Breaker: -{self.daily_cb_pct:.2f}% | Hard Limit: -{self.daily_dd_limit_pct:.2f}%)")
+                            print(f"Safety Cushion Saved:  {self.daily_dd_limit_pct - self.daily_cb_pct:.1f}% capital buffer before hard prop firm breach")
+                            print(f"Daily Loss:            -${abs(daily_pnl):,.2f}")
                             print("ACTION: Trading HALTED for remainder of day. All setup arming disabled until 00:00 UTC.")
                             print("!" * 80 + "\n")
-                            self.notifier.notify_circuit_breaker("daily", current_equity, self.daily_loss_limit_pct, abs(daily_pnl))
+                            self.notifier.notify_circuit_breaker("daily", current_equity, self.daily_cb_pct, abs(daily_pnl), hard_limit_pct=self.daily_dd_limit_pct)
                             for s in self.symbols:
                                 self.armed_states[s].is_armed = False
 
-                # 2. Session alerts (London 06:00 UTC, NY 12:00 UTC, EOD 21:00 UTC)
+                # 2. High-Impact News Shield Surveillance & State Machine
+                if self.use_news_shield:
+                    active_shield = self.news_engine.get_active_news_shield(now_utc)
+                    if active_shield:
+                        event_key = f"{active_shield['title']}_{active_shield['event_time_str']}"
+                        if event_key not in self.notified_news_activations:
+                            self.notified_news_activations.add(event_key)
+                            self.active_news_shield = active_shield
+                            print("\n" + "!" * 80)
+                            print(f"[*** HIGH-IMPACT NEWS SHIELD ACTIVATED ***]")
+                            print(f"Event:    {active_shield['country']} - {active_shield['title']}")
+                            print(f"Release:  {active_shield.get('event_time_dual', active_shield['event_time_str'] + ' UTC')}")
+                            print(f"Blackout: {active_shield.get('blackout_start_dual', active_shield['blackout_start_str'] + ' UTC')} -> {active_shield.get('resume_time_dual', active_shield['resume_time_str'] + ' UTC')}")
+                            print(f"ACTION:   Trading paused. All armed setups cleared.")
+                            print("!" * 80 + "\n")
+                            self.notifier.notify_news_shield_activated(
+                                active_shield['title'],
+                                active_shield['country'],
+                                active_shield['event_time_str'],
+                                active_shield['resume_time_str']
+                            )
+                            for s in self.symbols:
+                                self.armed_states[s].is_armed = False
+                    elif self.active_news_shield is not None:
+                        lift_key = f"{self.active_news_shield['title']}_{self.active_news_shield['event_time_str']}"
+                        if lift_key not in self.notified_news_lifted:
+                            self.notified_news_lifted.add(lift_key)
+                            print("\n" + "=" * 80)
+                            print(f"[=== HIGH-IMPACT NEWS SHIELD LIFTED ===]")
+                            print(f"Event:    {self.active_news_shield['country']} - {self.active_news_shield['title']}")
+                            print(f"Resumed:  {now_utc.strftime('%H:%M:%S')} UTC ({now_ist.strftime('%H:%M:%S')} IST). Normal trading resumed.")
+                            print("=" * 80 + "\n")
+                            self.notifier.notify_news_shield_lifted(
+                                self.active_news_shield['title'],
+                                self.active_news_shield['resume_time_str']
+                            )
+                        self.active_news_shield = None
+
+                # 3. Session alerts (London 06:00 UTC, NY 12:00 UTC, EOD 21:00 UTC)
                 cur_h = now_utc.hour
                 cur_m = now_utc.minute
                 if cur_m == 0:
@@ -1106,53 +1402,128 @@ class InstitutionalDCCBot:
                         self.session_notified["eod_close"] = True
                         self.notifier.notify_session("End-of-Day (21:00 UTC / 02:30 IST)", "REACHED")
 
-                # 3. Manage any active positions (Breakeven automator)
+                # 4. Manage any active positions (Breakeven automator)
                 self.manage_active_positions()
 
-                # 4. Check for newly closed 5M bar on each symbol
+                # 5. Check for newly closed 5M bar on each symbol
                 for symbol in self.symbols:
                     m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 2)
                     if m5_rates is not None and len(m5_rates) >= 2:
                         last_bar_t = m5_rates[-2]['time']
                         if self.last_checked_bars[symbol] is None:
                             self.last_checked_bars[symbol] = last_bar_t
-                            sys.stdout.write("\n")
-                            sys.stdout.flush()
                             self.check_candle_arm_status(symbol)
                         elif self.last_checked_bars[symbol] != last_bar_t:
                             self.last_checked_bars[symbol] = last_bar_t
-                            sys.stdout.write("\n")
-                            sys.stdout.flush()
                             self.check_candle_arm_status(symbol)
 
-                # 5. Process Armed Candlestick Tick Streaming in last 2 minutes
+                # 6. Process Armed Candlestick Tick Streaming in last 2 minutes
                 for symbol in self.symbols:
                     state = self.armed_states[symbol]
                     if state.is_armed and seconds_left_in_5m <= 120.0:
                         self.process_tick_stream_last_2min(symbol, seconds_left_in_5m)
 
-                # 6. Real-time Heartbeat & Status Animation
+                # 7. Real-time Heartbeat & Status Animation
                 any_armed_in_window = any(
                     s.is_armed and seconds_left_in_5m <= 120.0 for s in self.armed_states.values()
                 )
                 if not any_armed_in_window:
                     frame = self.spinner_frames[self.spinner_idx % len(self.spinner_frames)]
+                    frame_color = self.spinner_colors[self.spinner_idx % len(self.spinner_colors)]
                     self.spinner_idx += 1
 
                     tick_xau = mt5.symbol_info_tick("XAUUSD")
                     tick_nas = mt5.symbol_info_tick("NAS100")
-                    xau_str = f"{tick_xau.bid:.2f}/{tick_xau.ask:.2f} (Sp: {tick_xau.ask-tick_xau.bid:.2f})" if tick_xau else "N/A"
-                    nas_str = f"{tick_nas.bid:.1f}/{tick_nas.ask:.1f} (Sp: {tick_nas.ask-tick_nas.bid:.1f})" if tick_nas else "N/A"
                     eq_val = f"${account.equity:,.2f}" if account else "$0.00"
 
-                    hb = (
-                        f"[SURVEILLANCE {frame}] {now_utc.strftime('%H:%M:%S')} UTC ({now_ist.strftime('%H:%M:%S')} IST) | "
-                        f"XAU: {xau_str} | NAS: {nas_str} | Next Bar in: {m_left:02d}m {s_left:02d}s | "
-                        f"Eq: {eq_val}"
-                    )
-                    sys.stdout.write(f"\r{hb.ljust(115)}")
-                    sys.stdout.flush()
-                    pytime.sleep(1.0)
+                    t = Text()
+
+                    # 1. Rotating Radar Surveillance Badge
+                    t.append("[", style="bold cyan")
+                    t.append("SURVEILLANCE ", style="bold bright_white")
+                    t.append(frame, style=frame_color)
+                    t.append("] ", style="bold cyan")
+
+                    # 2. Dual Timezone Timestamps
+                    t.append(f"{now_utc.strftime('%H:%M:%S')} UTC ", style="bold white")
+                    t.append(f"({now_ist.strftime('%H:%M:%S')} IST)", style="bold bright_cyan")
+                    t.append(" | ", style="bright_black")
+
+                    # 3. Gold (XAUUSD) & Dynamic Spread Health
+                    t.append("XAU: ", style="bold yellow")
+                    if tick_xau:
+                        xau_sp = tick_xau.ask - tick_xau.bid
+                        t.append(f"{tick_xau.bid:.2f}/{tick_xau.ask:.2f} ", style="white")
+                        if xau_sp <= 0.40:
+                            xau_sp_style = "green"
+                        elif xau_sp <= 0.65:
+                            xau_sp_style = "yellow"
+                        else:
+                            xau_sp_style = "bold red"
+                        t.append(f"(Sp: {xau_sp:.2f})", style=xau_sp_style)
+                    else:
+                        t.append("N/A", style="bright_black")
+                    t.append(" | ", style="bright_black")
+
+                    # 4. Nasdaq (NAS100) & Dynamic Spread Health
+                    t.append("NAS: ", style="bold bright_blue")
+                    if tick_nas:
+                        nas_sp = tick_nas.ask - tick_nas.bid
+                        t.append(f"{tick_nas.bid:.1f}/{tick_nas.ask:.1f} ", style="white")
+                        if nas_sp <= 2.5:
+                            nas_sp_style = "green"
+                        elif nas_sp <= 4.0:
+                            nas_sp_style = "yellow"
+                        else:
+                            nas_sp_style = "bold red"
+                        t.append(f"(Sp: {nas_sp:.1f})", style=nas_sp_style)
+                    else:
+                        t.append("N/A", style="bright_black")
+                    t.append(" | ", style="bright_black")
+
+                    # 5. Next Bar Countdown with Urgency Color Coding
+                    t.append("Next Bar in: ", style="white")
+                    if seconds_left_in_5m > 120.0:
+                        cd_style = "bold green"
+                    elif seconds_left_in_5m > 30.0:
+                        cd_style = "bold yellow"
+                    else:
+                        cd_style = "bold bright_red"
+                    t.append(f"{m_left:02d}m {s_left:02d}s", style=cd_style)
+                    t.append(" | ", style="bright_black")
+
+                    # 6. Institutional Account Equity Anchor
+                    t.append("Eq: ", style="bold white")
+                    t.append(eq_val, style="bold bright_green")
+
+                    # 7. Dynamic Armed Setup & News Shield Badges
+                    armed_items = [
+                        f"{sym} {st.signal.signal_type.value if st.signal else 'ARMED'}"
+                        for sym, st in self.armed_states.items()
+                        if st.is_armed
+                    ]
+                    if armed_items:
+                        t.append(" | ", style="bright_black")
+                        t.append(f"[ARMED: {', '.join(armed_items)}]", style="bold black on bright_yellow")
+
+                    if self.use_news_shield and self.news_engine.get_active_news_shield(now_utc):
+                        cur_shield = self.news_engine.get_active_news_shield(now_utc)
+                        mins_rem = int(cur_shield['seconds_remaining'] // 60)
+                        secs_rem = int(cur_shield['seconds_remaining'] % 60)
+                        resume_ist = cur_shield.get('resume_time_ist_str', '')
+                        ist_note = f" | Resumes {resume_ist} IST" if resume_ist else ""
+                        t.append(" | ", style="bright_black")
+                        t.append(f"[NEWS SHIELD ACTIVE: {mins_rem:02d}m {secs_rem:02d}s{ist_note}]", style="bold white on red")
+
+                    if self.active_positions:
+                        pos_items = [
+                            f"{p.symbol} {p.direction}" for p in self.active_positions.values()
+                        ]
+                        t.append(" | ", style="bright_black")
+                        t.append(f"[POS: {', '.join(pos_items)}]", style="bold white on dark_green")
+
+                    self.live.update(t)
+                    pytime.sleep(0.5)
                 else:
                     pytime.sleep(0.05)
 
@@ -1163,6 +1534,8 @@ class InstitutionalDCCBot:
             print(f"\n[InstitutionalDCCBot] Error: {e}")
             self.notifier.notify_shutdown(f"Unexpected Error: {e}")
         finally:
+            if hasattr(self, "live") and self.live is not None:
+                self.live.stop()
             mt5.shutdown()
             print("[InstitutionalDCCBot] MT5 connection closed cleanly.")
 
@@ -1211,11 +1584,15 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         hwm = cfg.get("high_water_mark", equity)
 
         risk_pct = cfg["risk_per_trade"] * 100.0
-        daily_limit_pct = cfg["daily_dd_limit_pct"]
-        max_limit_pct = cfg["max_total_dd_pct"]
+        daily_limit_pct = cfg.get("daily_dd_limit_pct", 4.0)
+        daily_cb_pct = cfg.get("daily_cb_pct", round(max(0.1, daily_limit_pct - 1.0), 2))
+        max_limit_pct = cfg.get("max_total_dd_pct", 8.0)
+        max_cb_pct = cfg.get("max_cb_pct", round(max(0.1, max_limit_pct - 1.0), 2))
 
-        daily_halt_equity = equity * (1.0 - daily_limit_pct / 100.0)
-        max_halt_equity = hwm * (1.0 - max_limit_pct / 100.0)
+        daily_halt_equity = equity * (1.0 - daily_cb_pct / 100.0)
+        daily_hard_equity = equity * (1.0 - daily_limit_pct / 100.0)
+        max_halt_equity = hwm * (1.0 - max_cb_pct / 100.0)
+        max_hard_equity = hwm * (1.0 - max_limit_pct / 100.0)
         first_trade_risk = equity * cfg["risk_per_trade"]
 
         notif_cfg = acc_mgr.get_notification_config(acc_id)
@@ -1236,15 +1613,18 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         print(f"Peak Equity (HWM):   ${hwm:,.2f}")
         print("-" * 80)
         print(f"Current Rules for Account {acc_id}:")
-        print(f"  • Risk Per Trade:           {risk_pct:.1f}% (~${first_trade_risk:,.2f} risk on next trade)")
-        print(f"  • Daily DD Circuit Breaker: {daily_limit_pct:.1f}% (Halts if today's equity <= ${daily_halt_equity:,.2f})")
-        print(f"  • Max Total DD Breaker:     {max_limit_pct:.1f}% (Emergency stop if equity <= ${max_halt_equity:,.2f})")
+        print(f"  * Risk Per Trade:           {risk_pct:.1f}% (~${first_trade_risk:,.2f} risk on next trade)")
+        print(f"  * Daily Drawdown:           Hard Limit: -{daily_limit_pct:.1f}% (${daily_hard_equity:,.2f}) | Circuit Breaker: -{daily_cb_pct:.1f}% (Halt <= ${daily_halt_equity:,.2f})")
+        print(f"  * Max Total Drawdown:       Hard Limit: -{max_limit_pct:.1f}% (${max_hard_equity:,.2f}) | Circuit Breaker: -{max_cb_pct:.1f}% (Halt <= ${max_halt_equity:,.2f})")
         use_sweep = cfg.get("use_liquidity_sweep", True)
         sweep_str = "ENABLED (Recommended)" if use_sweep else "DISABLED (Off)"
+        use_news = cfg.get("use_news_shield", True)
+        news_status_str = "ENABLED (15m Blackout)" if use_news else "DISABLED (Off)"
 
-        print(f"  • Monitored Assets:         {', '.join(cfg.get('symbols', ['XAUUSD', 'NAS100']))}")
-        print(f"  • 5M Liquidity Sweep:       {sweep_str}")
-        print(f"  • Remote Notifications:     {plat_str}")
+        print(f"  * Monitored Assets:         {', '.join(cfg.get('symbols', ['XAUUSD', 'NAS100']))}")
+        print(f"  * 5M Liquidity Sweep:       {sweep_str}")
+        print(f"  * High-Impact News Shield:  {news_status_str}")
+        print(f"  * Remote Notifications:     {plat_str}")
         print("-" * 80)
         print("Select Action:")
         print("  [1] Start LIVE Trading (Real MT5 Orders)")
@@ -1252,10 +1632,12 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         print("  [3] Edit Risk & Drawdown Rules (Change Daily DD, Max DD, Risk %)")
         print("  [4] Configure Remote Notifications (Telegram / Discord)")
         print(f"  [5] Toggle 5M Liquidity Sweep Confluence (Currently: {'ON' if use_sweep else 'OFF'})")
-        print("  [6] Exit")
+        print(f"  [6] Toggle High-Impact News Shield (Currently: {'ON' if use_news else 'OFF'})")
+        print("  [7] View Upcoming High-Impact Economic News")
+        print("  [8] Exit")
         print("=" * 80)
 
-        choice = input("Enter choice [1-6] (Press Enter for [1]): ").strip()
+        choice = input("Enter choice [1-8] (Press Enter for [1]): ").strip()
         if not choice or choice == "1":
             return "live", cfg
         elif choice == "2":
@@ -1266,15 +1648,18 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
             r_in = input(f"New Risk Per Trade % [Current: {curr_r:.1f}%] (Press Enter to keep): ").strip()
             new_r = float(r_in) if r_in else curr_r
 
-            curr_d = cfg["daily_dd_limit_pct"]
-            d_in = input(f"New Daily DD Limit % [Current: {curr_d:.1f}%] (Press Enter to keep): ").strip()
+            curr_d = cfg.get("daily_dd_limit_pct", 4.0)
+            d_in = input(f"New Daily DD Hard Limit % [Current: {curr_d:.1f}%] (Press Enter to keep): ").strip()
             new_d = float(d_in) if d_in else curr_d
 
-            curr_m = cfg["max_total_dd_pct"]
-            m_in = input(f"New Max Account DD % [Current: {curr_m:.1f}%] (Press Enter to keep): ").strip()
+            curr_m = cfg.get("max_total_dd_pct", 8.0)
+            m_in = input(f"New Max Account DD Hard Limit % [Current: {curr_m:.1f}%] (Press Enter to keep): ").strip()
             new_m = float(m_in) if m_in else curr_m
 
-            acc_mgr.update_account_rules(acc_id, new_r, new_d, new_m)
+            # Prompt Circuit Breaker auto-configuration (-1% safety cushion) or manual entry
+            new_daily_cb, new_max_cb = prompt_circuit_breakers(new_d, new_m)
+
+            acc_mgr.update_account_rules(acc_id, new_r, new_d, new_m, new_daily_cb, new_max_cb)
             cfg = acc_mgr.accounts[acc_id]
             input("\nSettings updated! Press Enter to return to main menu...")
         elif choice == "4":
@@ -1350,11 +1735,32 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
             print(f"\n[UPDATED] 5M Liquidity Sweep Confluence is now {status_lbl.upper()}!")
             input("\nPress Enter to return to main menu...")
         elif choice == "6":
+            new_shield = acc_mgr.toggle_news_shield(acc_id)
+            cfg = acc_mgr.accounts[acc_id]
+            status_lbl = "ENABLED (15m Blackout around USD High-Impact News)" if new_shield else "DISABLED (Off)"
+            print(f"\n[UPDATED] High-Impact News Shield is now {status_lbl.upper()}!")
+            input("\nPress Enter to return to main menu...")
+        elif choice == "7":
+            print("\n" + "=" * 80)
+            print("          UPCOMING ECONOMIC CALENDAR (USD HIGH-IMPACT | DUAL UTC + IST)")
+            print("=" * 80)
+            engine = NewsEngine()
+            events = engine.get_upcoming_events(now_utc=datetime.now(timezone.utc), hours_ahead=48)
+            if not events:
+                print("  No high-impact USD events scheduled in the next 48 hours.")
+            else:
+                for ev in events:
+                    f_val = ev.forecast if ev.forecast else "-"
+                    p_val = ev.previous if ev.previous else "-"
+                    print(f"  * {ev.time_dual_str} | [{ev.impact.upper()}] {ev.country} - {ev.title} (Forecast: {f_val}, Prev: {p_val})")
+            print("=" * 80)
+            input("\nPress Enter to return to main menu...")
+        elif choice == "8":
             print("Exiting Institutional DCC Bot.")
             mt5.shutdown()
             sys.exit(0)
         else:
-            print("[WARN] Invalid option. Please enter 1, 2, 3, 4, 5, or 6.")
+            print("[WARN] Invalid option. Please enter a number between 1 and 8.")
 
 
 def main():
@@ -1367,11 +1773,14 @@ def main():
     parser = argparse.ArgumentParser(description="Run DCC Institutional Live Bot on MT5")
     parser.add_argument("--symbols", nargs="+", default=None)
     parser.add_argument("--risk", type=float, default=None, help="Risk per trade as decimal (e.g. 0.01 for 1 percent)")
-    parser.add_argument("--daily-loss-limit", type=float, default=None, help="Daily drawdown percentage circuit breaker (e.g. 3.0 percent)")
-    parser.add_argument("--max-total-dd", type=float, default=None, help="Maximum total drawdown percentage circuit breaker (e.g. 8.0 percent)")
+    parser.add_argument("--daily-loss-limit", type=float, default=None, help="Daily drawdown hard limit percentage (e.g. 4.0 percent)")
+    parser.add_argument("--daily-cb", type=float, default=None, help="Daily circuit breaker percentage (e.g. 3.0 percent, must be < daily-loss-limit)")
+    parser.add_argument("--max-total-dd", type=float, default=None, help="Maximum total drawdown hard limit percentage (e.g. 8.0 percent)")
+    parser.add_argument("--max-cb", type=float, default=None, help="Maximum total circuit breaker percentage (e.g. 7.0 percent, must be < max-total-dd)")
     parser.add_argument("--dry-run", action="store_true", default=False, help="Run in paper trading mode")
     parser.add_argument("--auto", action="store_true", default=False, help="Bypass interactive menu and run immediately with saved account config")
     parser.add_argument("--no-sweep", action="store_true", default=False, help="Disable 5M liquidity sweep confluence filter")
+    parser.add_argument("--no-news-shield", action="store_true", default=False, help="Disable Forex Factory high-impact news blackout shield")
     args = parser.parse_args()
 
     if not mt5.initialize():
@@ -1393,20 +1802,26 @@ def main():
 
     symbols = args.symbols if args.symbols is not None else cfg.get("symbols", ["XAUUSD", "NAS100"])
     risk = args.risk if args.risk is not None else cfg["risk_per_trade"]
-    daily_dd = args.daily_loss_limit if args.daily_loss_limit is not None else cfg["daily_dd_limit_pct"]
-    max_dd = args.max_total_dd if args.max_total_dd is not None else cfg["max_total_dd_pct"]
+    daily_dd = args.daily_loss_limit if args.daily_loss_limit is not None else cfg.get("daily_dd_limit_pct", 4.0)
+    daily_cb = args.daily_cb if args.daily_cb is not None else cfg.get("daily_cb_pct", round(max(0.1, daily_dd - 1.0), 2))
+    max_dd = args.max_total_dd if args.max_total_dd is not None else cfg.get("max_total_dd_pct", 8.0)
+    max_cb = args.max_cb if args.max_cb is not None else cfg.get("max_cb_pct", round(max(0.1, max_dd - 1.0), 2))
     is_dry_run = True if (mode == "dry_run" or args.dry_run) else False
     use_sweep = False if args.no_sweep else cfg.get("use_liquidity_sweep", True)
+    use_news = False if args.no_news_shield else cfg.get("use_news_shield", True)
 
     bot = InstitutionalDCCBot(
         symbols=symbols,
         risk_per_trade=risk,
-        daily_loss_limit_pct=daily_dd,
+        daily_dd_limit_pct=daily_dd,
+        daily_cb_pct=daily_cb,
         max_total_dd_pct=max_dd,
+        max_cb_pct=max_cb,
         high_water_mark=cfg.get("high_water_mark", account_info.equity),
         config_mgr=acc_mgr,
         dry_run=is_dry_run,
-        use_liquidity_sweep=use_sweep
+        use_liquidity_sweep=use_sweep,
+        use_news_shield=use_news
     )
     if bot.initialize():
         bot.run()
