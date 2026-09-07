@@ -497,6 +497,12 @@ class InstitutionalDCCBot:
         ]
         self.spinner_idx = 0
         self.tz_ist = timezone(timedelta(hours=5, minutes=30))
+        
+        # Session Trading Window (06:00 to 21:00 UTC / 11:30 to 02:30 IST)
+        # Asian session (00:00 to 06:00 UTC) is the liquidity range formation phase; entries are disabled.
+        self.entry_start_hour_utc: int = 6
+        self.entry_end_hour_utc: int = 21
+        self.trap_hours_utc: List[int] = [9, 13]
 
         self.data_provider = MT5DataProvider()
         self.engines: Dict[str, DCCEngine] = {}
@@ -828,10 +834,18 @@ class InstitutionalDCCBot:
             decision = "BLOCKED_POSITION_OPEN"
             reason = f"Trade already active on {symbol} (Ticket #{open_pos[0].ticket})"
             self.armed_states[symbol].is_armed = False
-        # 3. Dead trap hours (09:00 & 13:00 UTC)
-        elif now_utc.hour in [9, 13]:
+        # 3. Active Trading Session Filter (06:00 to 21:00 UTC / 11:30 to 02:30 IST)
+        # Asian Session (00:00 to 06:00 UTC / 05:30 to 11:30 IST) is the Liquidity Range Formation phase, NOT an entry phase.
+        elif now_utc.hour < self.entry_start_hour_utc or now_utc.hour >= self.entry_end_hour_utc:
+            ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
+            decision = "SKIPPED_OUTSIDE_SESSION"
+            reason = f"Outside Allowed Trading Window ({self.entry_start_hour_utc:02d}:00-{self.entry_end_hour_utc:02d}:00 UTC / 11:30-02:30 IST). Asian Liquidity Building Phase (Current: {now_utc.strftime('%H:%M')} UTC / {ist_str} IST)"
+            self.armed_states[symbol].is_armed = False
+        # 4. Dead trap hours (09:00 & 13:00 UTC)
+        elif now_utc.hour in self.trap_hours_utc:
+            ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
             decision = "SKIPPED_DEAD_HOUR"
-            reason = f"Dead Trap Hour Filter Active ({now_utc.hour:02d}:00 UTC)"
+            reason = f"Dead Trap Hour Filter Active ({now_utc.hour:02d}:00 UTC / {ist_str} IST)"
             self.armed_states[symbol].is_armed = False
         # 4. High-Impact News Shield Check (15m before & after USD news)
         elif self.use_news_shield and self.news_engine.get_active_news_shield(now_utc):
@@ -1536,6 +1550,12 @@ class InstitutionalDCCBot:
                         ]
                         t.append(" | ", style="bright_black")
                         t.append(f"[POS: {', '.join(pos_items)}]", style="bold white on dark_green")
+                    elif now_utc.hour < self.entry_start_hour_utc or now_utc.hour >= self.entry_end_hour_utc:
+                        t.append(" | ", style="bright_black")
+                        t.append("[ASIAN RANGE - ENTRIES PAUSED]", style="bold bright_black")
+                    elif now_utc.hour in self.trap_hours_utc:
+                        t.append(" | ", style="bright_black")
+                        t.append("[TRAP HOUR - ENTRIES PAUSED]", style="bold bright_black")
 
                     self.live.update(t)
                     pytime.sleep(0.5)
