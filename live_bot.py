@@ -288,6 +288,12 @@ class AccountConfigManager:
             if "use_news_shield" not in cfg:
                 cfg["use_news_shield"] = True
                 needs_save = True
+            if "use_ema_gap_filter" not in cfg:
+                cfg["use_ema_gap_filter"] = True
+                needs_save = True
+            if "entry_mode" not in cfg:
+                cfg["entry_mode"] = "pre_arm"
+                needs_save = True
             if "daily_cb_pct" not in cfg:
                 cfg["daily_cb_pct"] = round(max(0.1, cfg.get("daily_dd_limit_pct", 4.0) - 1.0), 2)
                 needs_save = True
@@ -342,6 +348,8 @@ class AccountConfigManager:
             "high_water_mark": round(float(account_info.equity), 2),
             "use_liquidity_sweep": True,
             "use_news_shield": True,
+            "use_ema_gap_filter": True,
+            "entry_mode": "pre_arm",
             "notifications": {
                 "active_platform": "none",
                 "telegram_bot_token": "",
@@ -435,6 +443,25 @@ class AccountConfigManager:
             return not curr
         return True
 
+    def toggle_ema_gap_filter(self, acc_id: str) -> bool:
+        if acc_id in self.accounts:
+            curr = self.accounts[acc_id].get("use_ema_gap_filter", True)
+            self.accounts[acc_id]["use_ema_gap_filter"] = not curr
+            self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+            self.save()
+            return not curr
+        return True
+
+    def toggle_entry_mode(self, acc_id: str) -> str:
+        if acc_id in self.accounts:
+            curr = self.accounts[acc_id].get("entry_mode", "pre_arm")
+            new_mode = "bar_close" if curr == "pre_arm" else "pre_arm"
+            self.accounts[acc_id]["entry_mode"] = new_mode
+            self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+            self.save()
+            return new_mode
+        return "pre_arm"
+
 
 class InstitutionalDCCBot:
     def __init__(
@@ -451,6 +478,8 @@ class InstitutionalDCCBot:
         dry_run: bool = False,
         use_liquidity_sweep: bool = True,
         use_news_shield: bool = True,
+        use_ema_gap_filter: bool = True,
+        entry_mode: str = "pre_arm",
     ):
         self.symbols = symbols
         self.risk_per_trade = risk_per_trade
@@ -477,6 +506,8 @@ class InstitutionalDCCBot:
         self.dry_run = dry_run
         self.use_liquidity_sweep = use_liquidity_sweep
         self.use_news_shield = use_news_shield
+        self.use_ema_gap_filter = use_ema_gap_filter
+        self.entry_mode = entry_mode if entry_mode in ["pre_arm", "bar_close"] else "pre_arm"
         self.news_engine = NewsEngine(cache_dir=self.config_mgr.config_path if False else None)
         self.active_news_shield: Optional[Dict] = None
         self.notified_news_activations: set = set()
@@ -581,6 +612,12 @@ class InstitutionalDCCBot:
         print(f"5M Liquidity Sweep:      {sweep_str}")
         news_str = "ENABLED (15m Blackout around USD High-Impact News)" if self.use_news_shield else "DISABLED (Off)"
         print(f"High-Impact News Shield: {news_str}")
+        gap_str = "ENABLED (Strict 0.35xATR)" if self.use_ema_gap_filter else "DISABLED (Matches Backtest)"
+        print(f"EMA Gap Filter:          {gap_str}")
+        mode_str = "BAR-CLOSE (Instant Flip Entry / Matches Backtest)" if self.entry_mode == "bar_close" else "PRE-ARM (2-Min High-Frequency Tick Stream)"
+        print(f"Entry Mode:              {mode_str}")
+        if not self.use_ema_gap_filter and self.entry_mode == "bar_close":
+            print(">> STATUS: [EXACT 1-TO-1 BACKTEST EXECUTION MATCH ACTIVE] <<")
         
         plat = self.notifier.active_platform
         if plat == "telegram":
@@ -868,51 +905,174 @@ class InstitutionalDCCBot:
             reason = f"ATR is invalid ({atr:.2f})"
             self.armed_states[symbol].is_armed = False
         else:
-            # Check setup formation
-            if bias == 1:
-                direction = 1
-                if m5_e9 > m5_e20:
-                    decision = "SKIPPED_NO_PULLBACK"
-                    reason = f"Trend expansion active (EMA9 {m5_e9:.2f} > EMA20 {m5_e20:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif close_p <= vwap:
-                    decision = "SKIPPED_BELOW_VWAP"
-                    reason = f"5M Close below Session VWAP ({close_p:.2f} <= {vwap:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif ema_gap > (0.35 * atr):
-                    decision = "SKIPPED_GAP_TOO_WIDE"
-                    reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif self.use_liquidity_sweep and not has_sweep:
-                    decision = "SKIPPED_SWEEP_UNCONFIRMED"
-                    reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
-                    self.armed_states[symbol].is_armed = False
-                else:
-                    decision = "ARMED_BUY"
-                    reason = "1H Bullish + 5M Compression + VWAP + Sweep Confirmed"
-            elif bias == -1:
-                direction = -1
-                if m5_e9 < m5_e20:
-                    decision = "SKIPPED_NO_PULLBACK"
-                    reason = f"Trend expansion active (EMA9 {m5_e9:.2f} < EMA20 {m5_e20:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif close_p >= vwap:
-                    decision = "SKIPPED_ABOVE_VWAP"
-                    reason = f"5M Close above Session VWAP ({close_p:.2f} >= {vwap:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif ema_gap > (0.35 * atr):
-                    decision = "SKIPPED_GAP_TOO_WIDE"
-                    reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
-                    self.armed_states[symbol].is_armed = False
-                elif self.use_liquidity_sweep and not has_sweep:
-                    decision = "SKIPPED_SWEEP_UNCONFIRMED"
-                    reason = f"5M Swing High ({sw_high_5m:.2f}) liquidity sweep not satisfied"
-                    self.armed_states[symbol].is_armed = False
-                else:
-                    decision = "ARMED_SELL"
-                    reason = "1H Bearish + 5M Compression + VWAP + Sweep Confirmed"
+            if self.entry_mode == "bar_close":
+                # =====================================================================
+                # BAR-CLOSE MODE (Exact Backtest Match):
+                # Detects EMA crossover flip on the newly closed 5M bar.
+                # If flip + VWAP + 1H EMA20 (+ optional Sweep & EMA Gap) pass,
+                # immediately places twin orders at the current market ask/bid.
+                # =====================================================================
+                prev_closed_bar = df_prep.iloc[-3] if len(df_prep) >= 3 else closed_bar
+                prev_e9 = float(prev_closed_bar['ema9_5m'])
+                prev_e20 = float(prev_closed_bar['ema20_5m'])
+                prev_diff = prev_e9 - prev_e20
+                curr_diff = m5_e9 - m5_e20
 
-        if decision.startswith("ARMED"):
+                if bias == 1:
+                    direction = 1
+                    is_flip = (prev_diff <= 0) and (curr_diff > 0)
+                    if not is_flip:
+                        decision = "SKIPPED_NO_FLIP"
+                        reason = f"No Bullish EMA flip on bar close (Prev diff: {prev_diff:.2f}, Curr diff: {curr_diff:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p <= vwap:
+                        decision = "SKIPPED_BELOW_VWAP"
+                        reason = f"5M Close below Session VWAP ({close_p:.2f} <= {vwap:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p <= h1_e20:
+                        decision = "SKIPPED_BELOW_H1_EMA20"
+                        reason = f"5M Close below 1H EMA20 ({close_p:.2f} <= {h1_e20:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
+                        decision = "SKIPPED_GAP_TOO_WIDE"
+                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_liquidity_sweep and not has_sweep:
+                        decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                        reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
+                        self.armed_states[symbol].is_armed = False
+                    else:
+                        decision = "FIRED_BAR_CLOSE_BUY"
+                        reason = "1H Bullish + 5M EMA Flip + VWAP + 1H EMA20 Confirmed"
+                elif bias == -1:
+                    direction = -1
+                    is_flip = (prev_diff >= 0) and (curr_diff < 0)
+                    if not is_flip:
+                        decision = "SKIPPED_NO_FLIP"
+                        reason = f"No Bearish EMA flip on bar close (Prev diff: {prev_diff:.2f}, Curr diff: {curr_diff:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p >= vwap:
+                        decision = "SKIPPED_ABOVE_VWAP"
+                        reason = f"5M Close above Session VWAP ({close_p:.2f} >= {vwap:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p >= h1_e20:
+                        decision = "SKIPPED_ABOVE_H1_EMA20"
+                        reason = f"5M Close above 1H EMA20 ({close_p:.2f} >= {h1_e20:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
+                        decision = "SKIPPED_GAP_TOO_WIDE"
+                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_liquidity_sweep and not has_sweep:
+                        decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                        reason = f"5M Swing High ({sw_high_5m:.2f}) liquidity sweep not satisfied"
+                        self.armed_states[symbol].is_armed = False
+                    else:
+                        decision = "FIRED_BAR_CLOSE_SELL"
+                        reason = "1H Bearish + 5M EMA Flip + VWAP + 1H EMA20 Confirmed"
+
+            else:
+                # =====================================================================
+                # PRE-ARM MODE (Original Strict Live Bot Behavior):
+                # Detects compression pullback on the closed bar. If confirmed, pre-arms
+                # the symbol and streams ticks during the final 2 minutes of the next bar
+                # to trigger execution at the candle boundary (< 0.25s).
+                # =====================================================================
+                if bias == 1:
+                    direction = 1
+                    if m5_e9 > m5_e20:
+                        decision = "SKIPPED_NO_PULLBACK"
+                        reason = f"Trend expansion active (EMA9 {m5_e9:.2f} > EMA20 {m5_e20:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p <= vwap:
+                        decision = "SKIPPED_BELOW_VWAP"
+                        reason = f"5M Close below Session VWAP ({close_p:.2f} <= {vwap:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
+                        decision = "SKIPPED_GAP_TOO_WIDE"
+                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_liquidity_sweep and not has_sweep:
+                        decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                        reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
+                        self.armed_states[symbol].is_armed = False
+                    else:
+                        decision = "ARMED_BUY"
+                        reason = "1H Bullish + 5M Compression + VWAP + Sweep Confirmed"
+                elif bias == -1:
+                    direction = -1
+                    if m5_e9 < m5_e20:
+                        decision = "SKIPPED_NO_PULLBACK"
+                        reason = f"Trend expansion active (EMA9 {m5_e9:.2f} < EMA20 {m5_e20:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif close_p >= vwap:
+                        decision = "SKIPPED_ABOVE_VWAP"
+                        reason = f"5M Close above Session VWAP ({close_p:.2f} >= {vwap:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
+                        decision = "SKIPPED_GAP_TOO_WIDE"
+                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
+                        self.armed_states[symbol].is_armed = False
+                    elif self.use_liquidity_sweep and not has_sweep:
+                        decision = "SKIPPED_SWEEP_UNCONFIRMED"
+                        reason = f"5M Swing High ({sw_high_5m:.2f}) liquidity sweep not satisfied"
+                        self.armed_states[symbol].is_armed = False
+                    else:
+                        decision = "ARMED_SELL"
+                        reason = "1H Bearish + 5M Compression + VWAP + Sweep Confirmed"
+
+        if decision.startswith("FIRED_BAR_CLOSE"):
+            tot_lots, p_lots, r_lots = self.calculate_lots(symbol, sl_dist)
+            planned_lots = tot_lots
+            
+            raw_tick = mt5.symbol_info_tick(symbol)
+            if raw_tick is not None and raw_tick.ask > 0 and raw_tick.bid > 0 and raw_tick.ask >= raw_tick.bid:
+                spread = raw_tick.ask - raw_tick.bid
+                cfg = CONFIGS[symbol]
+                if spread <= cfg.max_allowed_spread:
+                    ref_price = raw_tick.ask if direction == 1 else raw_tick.bid
+                    planned_entry = round(ref_price, digits)
+                    if direction == 1:
+                        planned_sl = round(ref_price - sl_dist, digits)
+                        planned_tp1 = round(ref_price + tp1_dist, digits)
+                        planned_tp2 = round(ref_price + tp2_dist, digits)
+                    else:
+                        planned_sl = round(ref_price + sl_dist, digits)
+                        planned_tp1 = round(ref_price - tp1_dist, digits)
+                        planned_tp2 = round(ref_price - tp2_dist, digits)
+
+                    state = PreArmedState(
+                        is_armed=False,
+                        direction=direction,
+                        armed_bar_time=c_time,
+                        target_close_time=c_time,
+                        prev_ema9=float(m5_e9),
+                        prev_ema20=float(m5_e20),
+                        h1_bias=int(bias),
+                        h1_e20=float(h1_e20),
+                        h1_adx=float(adx),
+                        h1_atr=float(atr),
+                        vwap_5m=float(vwap),
+                        sl_distance=float(sl_dist),
+                        tp1_distance=float(tp1_dist),
+                        tp2_distance=float(tp2_dist),
+                        projected_lots=tot_lots,
+                        partial_lots=p_lots,
+                        runner_lots=r_lots
+                    )
+
+                    print(f"\n>>> [BAR CLOSE FLIP CONFIRMED (BAR-CLOSE MODE)] FIRING IMMEDIATE TWIN ORDERS ON {symbol}! <<<")
+                    self.execute_twin_orders(symbol, state, ref_price, spread)
+                else:
+                    decision = "ABORTED_SPREAD_SPIKE"
+                    reason = f"Spread {spread:.2f} > max allowed {cfg.max_allowed_spread:.2f}"
+                    self.notifier.notify_setup_aborted(symbol, "BUY" if direction == 1 else "SELL", reason, ref_price if 'ref_price' in locals() else close_p, spread)
+            else:
+                decision = "ABORTED_NULL_TICK"
+                reason = "MT5 returned null tick at bar close"
+                self.notifier.notify_setup_aborted(symbol, "BUY" if direction == 1 else "SELL", reason, close_p, 0.0)
+
+        elif decision.startswith("ARMED"):
             tot_lots, p_lots, r_lots = self.calculate_lots(symbol, sl_dist)
             planned_lots = tot_lots
             target_close = c_time + pd.Timedelta(minutes=5)
@@ -1014,7 +1174,7 @@ class InstitutionalDCCBot:
         print(f"  * 1H Map Context: Bias: {bias_label} | ADX: {adx:.1f} ({adx_status} >= {cfg.adx_min:.1f}) | ATR: {atr:.{digits}f} | 1H EMA20: {h1_e20:.{digits}f}")
         print(f"  * Swing Levels:   5M Low: {sw_low_5m:.{digits}f} | 5M High: {sw_high_5m:.{digits}f} | 2H Low: {sw_low_2h:.{digits}f} | 2H High: {sw_high_2h:.{digits}f}")
         print(f"  * 5M Sweep Check: {sweep_str}")
-        if decision.startswith("ARMED"):
+        if decision.startswith("ARMED") or decision.startswith("FIRED"):
             print(f"  * DECISION:       >>> {decision} <<<")
             print(f"    Planned Setup:  Entry: {planned_entry:.{digits}f} | SL: {planned_sl:.{digits}f} | TP1: {planned_tp1:.{digits}f} | TP2: {planned_tp2:.{digits}f} | Lots: {planned_lots}")
         else:
@@ -1446,11 +1606,12 @@ class InstitutionalDCCBot:
                             self.last_checked_bars[symbol] = last_bar_t
                             self.check_candle_arm_status(symbol)
 
-                # 6. Process Armed Candlestick Tick Streaming in last 2 minutes
-                for symbol in self.symbols:
-                    state = self.armed_states[symbol]
-                    if state.is_armed and seconds_left_in_5m <= 120.0:
-                        self.process_tick_stream_last_2min(symbol, seconds_left_in_5m)
+                # 6. Process Armed Candlestick Tick Streaming in last 2 minutes (Pre-Arm Mode only)
+                if self.entry_mode == "pre_arm":
+                    for symbol in self.symbols:
+                        state = self.armed_states[symbol]
+                        if state.is_armed and seconds_left_in_5m <= 120.0:
+                            self.process_tick_stream_last_2min(symbol, seconds_left_in_5m)
 
                 # 7. Real-time Heartbeat & Status Animation
                 any_armed_in_window = any(
@@ -1472,6 +1633,8 @@ class InstitutionalDCCBot:
                     t.append("SURVEILLANCE ", style="bold bright_white")
                     t.append(frame, style=frame_color)
                     t.append("] ", style="bold cyan")
+                    mode_tag = "BAR-CLOSE" if self.entry_mode == "bar_close" else "PRE-ARM"
+                    t.append(f"[{mode_tag}] ", style="bold magenta")
 
                     # 2. Dual Timezone Timestamps
                     t.append(f"{now_utc.strftime('%H:%M:%S')} UTC ", style="bold white")
@@ -1655,10 +1818,18 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         sweep_str = "ENABLED (Recommended)" if use_sweep else "DISABLED (Off)"
         use_news = cfg.get("use_news_shield", True)
         news_status_str = "ENABLED (15m Blackout)" if use_news else "DISABLED (Off)"
+        use_gap = cfg.get("use_ema_gap_filter", True)
+        gap_str = "ENABLED (Strict 0.35xATR)" if use_gap else "DISABLED (Matches Backtest)"
+        entry_mode = cfg.get("entry_mode", "pre_arm")
+        mode_str = "BAR-CLOSE (Instant Flip Entry / Matches Backtest)" if entry_mode == "bar_close" else "PRE-ARM (2-Min Tick Stream)"
 
         print(f"  * Monitored Assets:         {', '.join(cfg.get('symbols', ['XAUUSD', 'NAS100']))}")
         print(f"  * 5M Liquidity Sweep:       {sweep_str}")
         print(f"  * High-Impact News Shield:  {news_status_str}")
+        print(f"  * EMA Gap Filter:           {gap_str}")
+        print(f"  * Entry Execution Mode:     {mode_str}")
+        if not use_gap and entry_mode == "bar_close":
+            print("  * [BACKTEST MATCH STATUS]:  EXACT 1-TO-1 MATCH ACTIVE (EMA Gap OFF + Bar-Close)")
         print(f"  * Remote Notifications:     {plat_str}")
         print("-" * 80)
         print("Select Action:")
@@ -1668,11 +1839,13 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         print("  [4] Configure Remote Notifications (Telegram / Discord)")
         print(f"  [5] Toggle 5M Liquidity Sweep Confluence (Currently: {'ON' if use_sweep else 'OFF'})")
         print(f"  [6] Toggle High-Impact News Shield (Currently: {'ON' if use_news else 'OFF'})")
-        print("  [7] View Upcoming High-Impact Economic News")
-        print("  [8] Exit")
+        print(f"  [7] Toggle EMA Gap Filter (Currently: {'ON (Strict)' if use_gap else 'OFF (Backtest Match)'})")
+        print(f"  [8] Switch Entry Mode (Currently: {'BAR-CLOSE (Backtest)' if entry_mode == 'bar_close' else 'PRE-ARM (Tick Stream)'})")
+        print("  [9] View Upcoming High-Impact Economic News")
+        print("  [10] Exit")
         print("=" * 80)
 
-        choice = input("Enter choice [1-8] (Press Enter for [1]): ").strip()
+        choice = input("Enter choice [1-10] (Press Enter for [1]): ").strip()
         if not choice or choice == "1":
             return "live", cfg
         elif choice == "2":
@@ -1776,6 +1949,18 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
             print(f"\n[UPDATED] High-Impact News Shield is now {status_lbl.upper()}!")
             input("\nPress Enter to return to main menu...")
         elif choice == "7":
+            new_gap = acc_mgr.toggle_ema_gap_filter(acc_id)
+            cfg = acc_mgr.accounts[acc_id]
+            status_lbl = "ENABLED (Strict 0.35xATR rejection)" if new_gap else "DISABLED (Matches Backtest)"
+            print(f"\n[UPDATED] EMA Gap Filter is now {status_lbl.upper()}!")
+            input("\nPress Enter to return to main menu...")
+        elif choice == "8":
+            new_mode = acc_mgr.toggle_entry_mode(acc_id)
+            cfg = acc_mgr.accounts[acc_id]
+            mode_lbl = "BAR-CLOSE (Instant entry on EMA crossover / Matches Backtest)" if new_mode == "bar_close" else "PRE-ARM (2-Min High-Frequency Tick Stream)"
+            print(f"\n[UPDATED] Entry Execution Mode is now {mode_lbl.upper()}!")
+            input("\nPress Enter to return to main menu...")
+        elif choice == "9":
             print("\n" + "=" * 80)
             print("          UPCOMING ECONOMIC CALENDAR (USD HIGH-IMPACT | DUAL UTC + IST)")
             print("=" * 80)
@@ -1790,12 +1975,12 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
                     print(f"  * {ev.time_dual_str} | [{ev.impact.upper()}] {ev.country} - {ev.title} (Forecast: {f_val}, Prev: {p_val})")
             print("=" * 80)
             input("\nPress Enter to return to main menu...")
-        elif choice == "8":
+        elif choice == "10":
             print("Exiting Institutional DCC Bot.")
             mt5.shutdown()
             sys.exit(0)
         else:
-            print("[WARN] Invalid option. Please enter a number between 1 and 8.")
+            print("[WARN] Invalid option. Please enter a number between 1 and 10.")
 
 
 def main():
@@ -1816,6 +2001,8 @@ def main():
     parser.add_argument("--auto", action="store_true", default=False, help="Bypass interactive menu and run immediately with saved account config")
     parser.add_argument("--no-sweep", action="store_true", default=False, help="Disable 5M liquidity sweep confluence filter")
     parser.add_argument("--no-news-shield", action="store_true", default=False, help="Disable Forex Factory high-impact news blackout shield")
+    parser.add_argument("--no-ema-gap-filter", action="store_true", default=False, help="Disable 0.35*ATR EMA gap filter (matches backtest)")
+    parser.add_argument("--entry-mode", choices=["pre_arm", "bar_close"], default=None, help="Entry mode: pre_arm (tick stream) or bar_close (instant flip)")
     args = parser.parse_args()
 
     if not mt5.initialize():
@@ -1844,6 +2031,8 @@ def main():
     is_dry_run = True if (mode == "dry_run" or args.dry_run) else False
     use_sweep = False if args.no_sweep else cfg.get("use_liquidity_sweep", True)
     use_news = False if args.no_news_shield else cfg.get("use_news_shield", True)
+    use_gap = False if args.no_ema_gap_filter else cfg.get("use_ema_gap_filter", True)
+    entry_m = args.entry_mode if args.entry_mode is not None else cfg.get("entry_mode", "pre_arm")
 
     bot = InstitutionalDCCBot(
         symbols=symbols,
@@ -1856,7 +2045,9 @@ def main():
         config_mgr=acc_mgr,
         dry_run=is_dry_run,
         use_liquidity_sweep=use_sweep,
-        use_news_shield=use_news
+        use_news_shield=use_news,
+        use_ema_gap_filter=use_gap,
+        entry_mode=entry_m,
     )
     if bot.initialize():
         bot.run()

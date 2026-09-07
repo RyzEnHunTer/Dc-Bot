@@ -75,7 +75,24 @@ def test_account_config_manager():
     assert mgr2.accounts["213877054"]["max_cb_pct"] == 9.0
     print("[PASS] Rule editing & persistence verified.")
 
-    # 4. Clean up test file
+    # 4. Verify EMA Gap Filter and Entry Mode defaults & toggles
+    assert cfg["use_ema_gap_filter"] is True
+    assert cfg["entry_mode"] == "pre_arm"
+    
+    new_gap = mgr2.toggle_ema_gap_filter("213877054")
+    assert new_gap is False
+    assert mgr2.accounts["213877054"]["use_ema_gap_filter"] is False
+    mgr2.toggle_ema_gap_filter("213877054")
+    assert mgr2.accounts["213877054"]["use_ema_gap_filter"] is True
+
+    new_mode = mgr2.toggle_entry_mode("213877054")
+    assert new_mode == "bar_close"
+    assert mgr2.accounts["213877054"]["entry_mode"] == "bar_close"
+    mgr2.toggle_entry_mode("213877054")
+    assert mgr2.accounts["213877054"]["entry_mode"] == "pre_arm"
+    print("[PASS] EMA Gap Filter & Entry Mode defaults and toggle persistence verified.")
+
+    # 5. Clean up test file
     if os.path.exists(TEST_CONFIG_PATH):
         os.remove(TEST_CONFIG_PATH)
 
@@ -87,8 +104,13 @@ def test_two_layer_circuit_breaker_protection():
         max_total_dd_pct=8.0,
         max_cb_pct=7.0,
         high_water_mark=10000.0,
-        dry_run=True
+        dry_run=True,
+        use_ema_gap_filter=False,
+        entry_mode="bar_close"
     )
+    assert bot.use_ema_gap_filter is False
+    assert bot.entry_mode == "bar_close"
+    print("[PASS] Bot initialized in exact backtest match mode (gap filter OFF + bar_close mode).")
     bot.daily_starting_equity = 10000.0
 
     # Normal trading equity: $9,800 (-2% daily, -2% max DD)
