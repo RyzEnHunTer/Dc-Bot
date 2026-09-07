@@ -90,6 +90,21 @@ class PreArmedState:
     partial_lots: float = 0.0
     runner_lots: float = 0.0
 
+    @property
+    def direction_str(self) -> str:
+        return "BUY" if self.direction == 1 else "SELL" if self.direction == -1 else "ARMED"
+
+    @property
+    def signal(self):
+        return self
+
+    @property
+    def signal_type(self):
+        class _SignalTypeProxy:
+            def __init__(self, val):
+                self.value = val
+        return _SignalTypeProxy(self.direction_str)
+
 
 @dataclass
 class ActiveTwinPosition:
@@ -1498,7 +1513,7 @@ class InstitutionalDCCBot:
 
                     # 7. Dynamic Armed Setup & News Shield Badges
                     armed_items = [
-                        f"{sym} {st.signal.signal_type.value if st.signal else 'ARMED'}"
+                        f"{sym} {st.direction_str}"
                         for sym, st in self.armed_states.items()
                         if st.is_armed
                     ]
