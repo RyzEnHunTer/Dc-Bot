@@ -534,6 +534,7 @@ class InstitutionalDCCBot:
         self.entry_start_hour_utc: int = 6
         self.entry_end_hour_utc: int = 21
         self.trap_hours_utc: List[int] = [9, 13]
+        self.broker_offset: timedelta = timedelta(hours=0)
 
         self.data_provider = MT5DataProvider()
         self.engines: Dict[str, DCCEngine] = {}
@@ -589,6 +590,19 @@ class InstitutionalDCCBot:
             info = mt5.symbol_info(s)
             fill_mode = self.get_safe_filling_mode(info)
             print(f"[{s}] Contract={info.trade_contract_size} | Digits={info.digits} | MinLot={info.volume_min} | FillingMode={fill_mode}")
+
+        # Auto-detect Broker Server Timezone Offset relative to UTC
+        try:
+            sample_sym = self.symbols[0]
+            tick = mt5.symbol_info_tick(sample_sym)
+            if tick and tick.time > 0:
+                s_time = datetime.fromtimestamp(tick.time, timezone.utc)
+                offset_hrs = round((s_time - datetime.now(timezone.utc)).total_seconds() / 3600.0)
+                self.broker_offset = timedelta(hours=offset_hrs)
+                offset_str = f"UTC+{offset_hrs}" if offset_hrs >= 0 else f"UTC{offset_hrs}"
+                print(f"[TIME SYNC] Detected MT5 Broker Server Timezone: {offset_str} ({self.broker_offset})")
+        except Exception as e:
+            print(f"[WARN] Could not auto-detect broker offset: {e}")
 
         print("\n" + "=" * 75)
         print("INSTITUTIONAL DCC BOT INITIALIZED")
@@ -771,25 +785,25 @@ class InstitutionalDCCBot:
         now_utc = datetime.now(timezone.utc)
         digits = 2 if "XAU" in symbol else 1
 
-        # Fetch rates with warmup
-        m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 150)
-        h1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 50)
-        h2_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H2, 0, 50)
+        # Fetch rates with sufficient warmup (500 M5 bars ensures all 288 bars of the current day are present for exact Session VWAP calculation)
+        m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 500)
+        h1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 200)
+        h2_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H2, 0, 200)
 
         if m5_rates is None or h1_rates is None or len(m5_rates) < 30:
             return
 
         df_m5 = pd.DataFrame(m5_rates)
-        df_m5['time'] = pd.to_datetime(df_m5['time'], unit='s', utc=True)
+        df_m5['time'] = pd.to_datetime(df_m5['time'], unit='s', utc=True) - self.broker_offset
         df_m5.set_index('time', inplace=True)
         df_m5.rename(columns={'tick_volume': 'volume'}, inplace=True)
 
         df_1h = pd.DataFrame(h1_rates)
-        df_1h['time'] = pd.to_datetime(df_1h['time'], unit='s', utc=True)
+        df_1h['time'] = pd.to_datetime(df_1h['time'], unit='s', utc=True) - self.broker_offset
         df_1h.set_index('time', inplace=True)
 
         df_2h = pd.DataFrame(h2_rates)
-        df_2h['time'] = pd.to_datetime(df_2h['time'], unit='s', utc=True)
+        df_2h['time'] = pd.to_datetime(df_2h['time'], unit='s', utc=True) - self.broker_offset
         df_2h.set_index('time', inplace=True)
 
         engine = self.engines[symbol]
