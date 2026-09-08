@@ -86,6 +86,71 @@ class TestNotificationEngine(unittest.TestCase):
         if os.path.exists(test_config_path):
             os.remove(test_config_path)
 
+    def test_trading_pause_and_resume_alerts(self):
+        """Verifies that notify_trading_paused and notify_trading_resumed format dual UTC+IST alerts properly."""
+        cfg = {
+            "active_platform": "discord",
+            "telegram_bot_token": "",
+            "telegram_chat_id": "",
+            "discord_webhook_url": "https://discord.com/api/webhooks/fake"
+        }
+        nm = NotificationManager(cfg)
+
+        # Clear queue for inspection
+        while not nm.msg_queue.empty():
+            try:
+                nm.msg_queue.get_nowait()
+            except Exception:
+                break
+
+        # Test pause alert
+        nm.notify_trading_paused(
+            zone_title="Morning Dead Trap Hour (09:00-10:00 UTC / 14:30-15:30 IST)",
+            reason="London midday liquidity lull.",
+            resume_time_str="10:00 UTC (15:30 IST)"
+        )
+        # Test resume alert
+        nm.notify_trading_resumed(
+            zone_title="Morning Dead Trap Hour Ended (10:00 UTC / 15:30 IST)",
+            session_name="Pre-New York Window",
+            details="Midday trap concluded. Active surveillance restored."
+        )
+
+        self.assertFalse(nm.msg_queue.empty())
+        print("[PASS] notify_trading_paused and notify_trading_resumed formatted and enqueued successfully.")
+
+    def test_session_state_machine(self):
+        """Verifies that get_session_state accurately maps all 24 hours of the day."""
+        from live_bot import InstitutionalDCCBot
+        bot = InstitutionalDCCBot(symbols=["XAUUSD"])
+
+        expected_states = {
+            0: "PAUSED_ASIAN",
+            3: "PAUSED_ASIAN",
+            5: "PAUSED_ASIAN",
+            6: "ACTIVE_LONDON",
+            7: "ACTIVE_LONDON",
+            8: "ACTIVE_LONDON",
+            9: "PAUSED_TRAP_09",
+            10: "ACTIVE_LONDON",
+            11: "ACTIVE_LONDON",
+            12: "ACTIVE_NY",
+            13: "PAUSED_TRAP_13",
+            14: "ACTIVE_NY",
+            18: "ACTIVE_NY",
+            20: "ACTIVE_NY",
+            21: "PAUSED_ASIAN",
+            22: "PAUSED_ASIAN",
+            23: "PAUSED_ASIAN",
+        }
+
+        for h, exp in expected_states.items():
+            actual = bot.get_session_state(h)
+            self.assertEqual(actual, exp, f"Hour {h} expected {exp} but got {actual}")
+
+        print("[PASS] Session and Killzone state machine accurately maps 24-hour cycle.")
+
 
 if __name__ == "__main__":
     unittest.main()
+

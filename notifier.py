@@ -42,16 +42,18 @@ def format_dual_time(dt: Optional[datetime] = None, include_date: bool = True) -
 
 def format_dual_hhmm(utc_hhmm: str) -> str:
     """Converts a UTC HH:MM string to dual 'HH:MM UTC (HH:MM IST)' string."""
+    if "IST" in utc_hhmm:
+        return utc_hhmm
     try:
         raw = utc_hhmm.replace("UTC", "").strip()
         parts = raw.split(":")
-        h, m = int(parts[0]), int(parts[1])
+        h, m = int(parts[0]), int(parts[1][:2])
         now_d = datetime.now(timezone.utc).date()
         dt_utc = datetime(now_d.year, now_d.month, now_d.day, h, m, tzinfo=timezone.utc)
         dt_ist = dt_utc.astimezone(TZ_IST)
-        return f"{raw} UTC ({dt_ist.strftime('%H:%M')} IST)"
+        return f"{h:02d}:{m:02d} UTC ({dt_ist.strftime('%H:%M')} IST)"
     except Exception:
-        return f"{utc_hhmm} UTC"
+        return f"{utc_hhmm}"
 
 
 class NotificationManager:
@@ -242,6 +244,59 @@ class NotificationManager:
             "footer": {"text": f"Time: {now_str}"}
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_trading_paused(self, zone_title: str, reason: str, resume_time_str: str, is_startup: bool = False):
+        """Notifies when trading surveillance and execution are paused (Killzone Pause / Dead Trap Hour / Asian Range)."""
+        now_str = format_dual_time(include_date=False)
+        res_dual = format_dual_hhmm(resume_time_str)
+        prefix = "CURRENT STATUS: " if is_startup else ""
+
+        tg_text = (
+            f"⏸️ <b>{prefix}TRADING PAUSED: {zone_title}</b>\n\n"
+            f"• <b>Reason:</b> {reason}\n"
+            f"• <b>Status:</b> Scanning & trade execution suspended\n"
+            f"• <b>Resumes:</b> {res_dual}\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+
+        discord_embed = {
+            "title": f"⏸️ {prefix}TRADING PAUSED: {zone_title}",
+            "description": f"**Status:** Scanning & trade execution suspended to protect capital.\n**Reason:** {reason}",
+            "color": 0xFFAA00,
+            "fields": [
+                {"name": "Status", "value": "PAUSED", "inline": True},
+                {"name": "Resumes At", "value": res_dual, "inline": True}
+            ],
+            "footer": {"text": f"Paused at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_trading_resumed(self, zone_title: str, session_name: str, details: str = "Active market surveillance and trade execution restored."):
+        """Notifies when trading surveillance and execution resume after a pause or session transition."""
+        now_str = format_dual_time(include_date=False)
+
+        tg_text = (
+            f"▶️ <b>TRADING RESUMED: {zone_title}</b>\n\n"
+            f"• <b>Active Window:</b> {session_name}\n"
+            f"• <b>Status:</b> {details}\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+
+        discord_embed = {
+            "title": f"▶️ TRADING RESUMED: {zone_title}",
+            "description": f"**Status:** {details}",
+            "color": 0x00FF88,
+            "fields": [
+                {"name": "Active Window", "value": session_name, "inline": True},
+                {"name": "Status", "value": "ACTIVE", "inline": True}
+            ],
+            "footer": {"text": f"Resumed at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    # Killzone convenience aliases for ICT terminology
+    notify_killzone_paused = notify_trading_paused
+    notify_killzone_resumed = notify_trading_resumed
 
     def notify_trade_opened(self, symbol: str, direction: str, entry_price: float, spread: float,
                             total_lots: float, partial_lots: float, runner_lots: float,

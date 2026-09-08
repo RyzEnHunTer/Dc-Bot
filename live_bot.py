@@ -515,6 +515,7 @@ class InstitutionalDCCBot:
         self.notified_armed_setups: Dict[str, datetime] = {}
         self.notifier = NotificationManager()
         self.session_notified: Dict[str, bool] = {}
+        self.current_session_state: Optional[str] = None
         self.audit_logger = MarketAuditLogger()
         self.console = Console(highlight=False, soft_wrap=True)
         self.spinner_frames = ["[|]", "[/]", "[-]", "[\\]"]
@@ -656,6 +657,9 @@ class InstitutionalDCCBot:
             daily_cb=self.daily_cb_pct,
             max_cb=self.max_cb_pct
         )
+
+        # Broadcast initial session / trap hour pause status if starting inside a paused window
+        self.check_session_and_trap_alerts(datetime.now(timezone.utc), is_startup=True)
 
         return True
 
@@ -1477,6 +1481,156 @@ class InstitutionalDCCBot:
                 self.notifier.notify_trade_closed(symbol, pos_info.ticket_b, reason, 0.0)
                 del self.active_positions[symbol]
 
+    def get_session_state(self, hour: int) -> str:
+        """Returns the trading window / killzone state for a given UTC hour."""
+        if hour == 9:
+            return "PAUSED_TRAP_09"
+        elif hour == 13:
+            return "PAUSED_TRAP_13"
+        elif hour < self.entry_start_hour_utc or hour >= self.entry_end_hour_utc:
+            return "PAUSED_ASIAN"
+        elif self.entry_start_hour_utc <= hour < 12:
+            return "ACTIVE_LONDON"
+        else:  # 12 <= hour < 21 and hour != 13
+            return "ACTIVE_NY"
+
+    def check_session_and_trap_alerts(self, now_utc: datetime, is_startup: bool = False):
+        """Monitors and broadcasts trading pause and resume milestones to Discord/Telegram.
+        Transitions smoothly across Killzone pauses, Dead Trap Hours, and Active Sessions.
+        """
+        new_state = self.get_session_state(now_utc.hour)
+
+        if is_startup:
+            self.current_session_state = new_state
+            if new_state == "PAUSED_TRAP_09":
+                print("\n" + "=" * 80)
+                print("[=== CURRENT STATUS: PAUSED IN MORNING DEAD TRAP HOUR ===]")
+                print("Resumes: 10:00 UTC (15:30 IST)")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_paused(
+                    zone_title="Morning Dead Trap Hour / Killzone Pause (09:00-10:00 UTC / 14:30-15:30 IST)",
+                    reason="Bot started during London midday lull. Scanning suspended to avoid false breakout traps.",
+                    resume_time_str="10:00 UTC (15:30 IST)",
+                    is_startup=True
+                )
+            elif new_state == "PAUSED_TRAP_13":
+                print("\n" + "=" * 80)
+                print("[=== CURRENT STATUS: PAUSED IN US DEAD TRAP HOUR ===]")
+                print("Resumes: 14:00 UTC (19:30 IST)")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_paused(
+                    zone_title="US Dead Trap Hour / Killzone Pause (13:00-14:00 UTC / 18:30-19:30 IST)",
+                    reason="Bot started during US pre-market transition chop. Trade arming and execution suspended.",
+                    resume_time_str="14:00 UTC (19:30 IST)",
+                    is_startup=True
+                )
+            elif new_state == "PAUSED_ASIAN":
+                print("\n" + "=" * 80)
+                print("[=== CURRENT STATUS: PAUSED IN ASIAN RANGE FORMATION ===]")
+                print("Resumes: 06:00 UTC (11:30 IST) at London Session Open")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_paused(
+                    zone_title="Asian Session Range Formation (21:00-06:00 UTC / 02:30-11:30 IST)",
+                    reason="Bot started outside active trading window. Asian session is designated for liquidity range building (entries disabled).",
+                    resume_time_str="06:00 UTC (11:30 IST) - London Session Open",
+                    is_startup=True
+                )
+            return
+
+        if new_state == self.current_session_state:
+            return
+
+        prev_state = self.current_session_state
+        self.current_session_state = new_state
+
+        if new_state == "PAUSED_TRAP_09":
+            for s in self.symbols:
+                self.armed_states[s].is_armed = False
+            print("\n" + "=" * 80)
+            print("[=== TRADING PAUSED: MORNING DEAD TRAP HOUR (09:00 UTC / 14:30 IST) ===]")
+            print("Reason:  London midday liquidity lull. High risk of false breakout traps.")
+            print("Resumes: 10:00 UTC (15:30 IST)")
+            print("=" * 80 + "\n")
+            self.notifier.notify_trading_paused(
+                zone_title="Morning Dead Trap Hour / Killzone Pause (09:00-10:00 UTC / 14:30-15:30 IST)",
+                reason="London midday liquidity lull. High risk of false breakout traps.",
+                resume_time_str="10:00 UTC (15:30 IST)"
+            )
+
+        elif new_state == "PAUSED_TRAP_13":
+            for s in self.symbols:
+                self.armed_states[s].is_armed = False
+            print("\n" + "=" * 80)
+            print("[=== TRADING PAUSED: US DEAD TRAP HOUR (13:00 UTC / 18:30 IST) ===]")
+            print("Reason:  US pre-market transition chop. Trade arming and execution suspended.")
+            print("Resumes: 14:00 UTC (19:30 IST)")
+            print("=" * 80 + "\n")
+            self.notifier.notify_trading_paused(
+                zone_title="US Dead Trap Hour / Killzone Pause (13:00-14:00 UTC / 18:30-19:30 IST)",
+                reason="US pre-market transition chop. Trade arming and execution suspended.",
+                resume_time_str="14:00 UTC (19:30 IST)"
+            )
+
+        elif new_state == "PAUSED_ASIAN":
+            for s in self.symbols:
+                self.armed_states[s].is_armed = False
+            print("\n" + "=" * 80)
+            print("[=== TRADING PAUSED: END-OF-DAY / ASIAN RANGE (21:00 UTC / 02:30 IST) ===]")
+            print("Reason:  Active trading window closed. Asian session builds liquidity range (entries disabled).")
+            print("Resumes: 06:00 UTC (11:30 IST) - London Session Open")
+            print("=" * 80 + "\n")
+            self.notifier.notify_trading_paused(
+                zone_title="End-of-Day / Asian Session Range Formation (21:00-06:00 UTC / 02:30-11:30 IST)",
+                reason="Active trading session closed. Asian session is designated for liquidity range building (entries disabled).",
+                resume_time_str="06:00 UTC (11:30 IST) - London Session Open"
+            )
+
+        elif new_state == "ACTIVE_LONDON":
+            if prev_state == "PAUSED_ASIAN":
+                print("\n" + "=" * 80)
+                print("[=== TRADING RESUMED: LONDON SESSION OPEN (06:00 UTC / 11:30 IST) ===]")
+                print("Active Window: European / London Killzone Window")
+                print("Status:        Asian liquidity range established. Active market surveillance restored.")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_resumed(
+                    zone_title="London Session Opened (06:00 UTC / 11:30 IST)",
+                    session_name="European / London Killzone Window",
+                    details="Asian liquidity range established. Active market surveillance and trade execution restored."
+                )
+            elif prev_state == "PAUSED_TRAP_09":
+                print("\n" + "=" * 80)
+                print("[=== TRADING RESUMED: MORNING DEAD TRAP HOUR ENDED (10:00 UTC / 15:30 IST) ===]")
+                print("Active Window: Pre-New York Window")
+                print("Status:        Midday trap period concluded. Active market surveillance restored.")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_resumed(
+                    zone_title="Morning Dead Trap Hour Ended (10:00 UTC / 15:30 IST)",
+                    session_name="Pre-New York Window",
+                    details="Midday trap period concluded. Active market surveillance and trade execution restored."
+                )
+
+        elif new_state == "ACTIVE_NY":
+            if prev_state == "ACTIVE_LONDON":
+                print("\n" + "=" * 80)
+                print("[=== SESSION UPDATE: NEW YORK SESSION OPEN (12:00 UTC / 17:30 IST) ===]")
+                print("Active Window: US / New York Killzone Window Active")
+                print("=" * 80 + "\n")
+                self.notifier.notify_session(
+                    session_name="New York Session (12:00 UTC / 17:30 IST)",
+                    status="OPENED - US Killzone Window Active"
+                )
+            elif prev_state == "PAUSED_TRAP_13":
+                print("\n" + "=" * 80)
+                print("[=== TRADING RESUMED: US DEAD TRAP HOUR ENDED (14:00 UTC / 19:30 IST) ===]")
+                print("Active Window: New York Active Trading Session")
+                print("Status:        US pre-market transition ended. Active market surveillance restored.")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_resumed(
+                    zone_title="US Dead Trap Hour Ended (14:00 UTC / 19:30 IST)",
+                    session_name="New York Active Trading Session",
+                    details="US pre-market transition ended. Active market surveillance restored."
+                )
+
     def run(self):
         print("\n[InstitutionalDCCBot] Starting Live Monitoring Loop...")
         print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
@@ -1591,19 +1745,8 @@ class InstitutionalDCCBot:
                             )
                         self.active_news_shield = None
 
-                # 3. Session alerts (London 06:00 UTC, NY 12:00 UTC, EOD 21:00 UTC)
-                cur_h = now_utc.hour
-                cur_m = now_utc.minute
-                if cur_m == 0:
-                    if cur_h == 6 and not self.session_notified.get("london_open", False):
-                        self.session_notified["london_open"] = True
-                        self.notifier.notify_session("London Session (06:00 UTC / 11:30 IST)", "OPENED")
-                    elif cur_h == 12 and not self.session_notified.get("ny_open", False):
-                        self.session_notified["ny_open"] = True
-                        self.notifier.notify_session("New York Session (12:00 UTC / 17:30 IST)", "OPENED")
-                    elif cur_h == 21 and not self.session_notified.get("eod_close", False):
-                        self.session_notified["eod_close"] = True
-                        self.notifier.notify_session("End-of-Day (21:00 UTC / 02:30 IST)", "REACHED")
+                # 3. Session & Killzone Trap alerts (Pause & Resume transitions)
+                self.check_session_and_trap_alerts(now_utc)
 
                 # 4. Manage any active positions (Breakeven automator)
                 self.manage_active_positions()
