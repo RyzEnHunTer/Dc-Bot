@@ -76,20 +76,20 @@ def test_account_config_manager():
     print("[PASS] Rule editing & persistence verified.")
 
     # 4. Verify EMA Gap Filter and Entry Mode defaults & toggles
-    assert cfg["use_ema_gap_filter"] is True
-    assert cfg["entry_mode"] == "pre_arm"
+    assert cfg["use_ema_gap_filter"] is False
+    assert cfg["entry_mode"] == "bar_close"
     
     new_gap = mgr2.toggle_ema_gap_filter("213877054")
-    assert new_gap is False
-    assert mgr2.accounts["213877054"]["use_ema_gap_filter"] is False
-    mgr2.toggle_ema_gap_filter("213877054")
+    assert new_gap is True
     assert mgr2.accounts["213877054"]["use_ema_gap_filter"] is True
+    mgr2.toggle_ema_gap_filter("213877054")
+    assert mgr2.accounts["213877054"]["use_ema_gap_filter"] is False
 
     new_mode = mgr2.toggle_entry_mode("213877054")
-    assert new_mode == "bar_close"
-    assert mgr2.accounts["213877054"]["entry_mode"] == "bar_close"
-    mgr2.toggle_entry_mode("213877054")
+    assert new_mode == "pre_arm"
     assert mgr2.accounts["213877054"]["entry_mode"] == "pre_arm"
+    mgr2.toggle_entry_mode("213877054")
+    assert mgr2.accounts["213877054"]["entry_mode"] == "bar_close"
     print("[PASS] EMA Gap Filter & Entry Mode defaults and toggle persistence verified.")
 
     # 5. Clean up test file

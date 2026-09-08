@@ -289,10 +289,10 @@ class AccountConfigManager:
                 cfg["use_news_shield"] = True
                 needs_save = True
             if "use_ema_gap_filter" not in cfg:
-                cfg["use_ema_gap_filter"] = True
+                cfg["use_ema_gap_filter"] = False
                 needs_save = True
             if "entry_mode" not in cfg:
-                cfg["entry_mode"] = "pre_arm"
+                cfg["entry_mode"] = "bar_close"
                 needs_save = True
             if "daily_cb_pct" not in cfg:
                 cfg["daily_cb_pct"] = round(max(0.1, cfg.get("daily_dd_limit_pct", 4.0) - 1.0), 2)
@@ -348,8 +348,8 @@ class AccountConfigManager:
             "high_water_mark": round(float(account_info.equity), 2),
             "use_liquidity_sweep": True,
             "use_news_shield": True,
-            "use_ema_gap_filter": True,
-            "entry_mode": "pre_arm",
+            "use_ema_gap_filter": False,
+            "entry_mode": "bar_close",
             "notifications": {
                 "active_platform": "none",
                 "telegram_bot_token": "",
@@ -478,8 +478,8 @@ class InstitutionalDCCBot:
         dry_run: bool = False,
         use_liquidity_sweep: bool = True,
         use_news_shield: bool = True,
-        use_ema_gap_filter: bool = True,
-        entry_mode: str = "pre_arm",
+        use_ema_gap_filter: bool = False,
+        entry_mode: str = "bar_close",
     ):
         self.symbols = symbols
         self.risk_per_trade = risk_per_trade
@@ -2045,8 +2045,27 @@ def main():
     is_dry_run = True if (mode == "dry_run" or args.dry_run) else False
     use_sweep = False if args.no_sweep else cfg.get("use_liquidity_sweep", True)
     use_news = False if args.no_news_shield else cfg.get("use_news_shield", True)
-    use_gap = False if args.no_ema_gap_filter else cfg.get("use_ema_gap_filter", True)
-    entry_m = args.entry_mode if args.entry_mode is not None else cfg.get("entry_mode", "pre_arm")
+    use_gap = False if args.no_ema_gap_filter else cfg.get("use_ema_gap_filter", False)
+    entry_m = args.entry_mode if args.entry_mode is not None else cfg.get("entry_mode", "bar_close")
+
+    # Automatically persist command-line overrides to bot_accounts_config.json so they are remembered forever
+    cli_changed = False
+    if args.no_ema_gap_filter and cfg.get("use_ema_gap_filter") is not False:
+        cfg["use_ema_gap_filter"] = False
+        cli_changed = True
+    if args.entry_mode is not None and cfg.get("entry_mode") != args.entry_mode:
+        cfg["entry_mode"] = args.entry_mode
+        cli_changed = True
+    if args.no_sweep and cfg.get("use_liquidity_sweep") is not False:
+        cfg["use_liquidity_sweep"] = False
+        cli_changed = True
+    if args.no_news_shield and cfg.get("use_news_shield") is not False:
+        cfg["use_news_shield"] = False
+        cli_changed = True
+    if cli_changed:
+        cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
+        acc_mgr.save()
+        print("[PERSISTENCE] Command-line settings permanently saved to bot_accounts_config.json!")
 
     bot = InstitutionalDCCBot(
         symbols=symbols,
