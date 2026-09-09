@@ -1413,17 +1413,27 @@ class InstitutionalDCCBot:
             print(f"[WARN] Order execution warning: RetCode A={ret_a}, RetCode B={ret_b}")
 
     def manage_active_positions(self):
-        """Monitors open positions: Automatically moves Runner SL to Breakeven when Ticket A closes."""
+        """Monitors open positions: Automatically moves Runner SL to Breakeven when Ticket A closes, and cleans up when closed."""
         for symbol in list(self.active_positions.keys()):
             pos_info = self.active_positions[symbol]
-            if pos_info.runner_moved_to_be:
-                continue
 
-            # Check if Ticket A is still open
+            # Check if tickets are still open in MT5
             open_positions = mt5.positions_get(symbol=symbol)
             open_tickets = [p.ticket for p in open_positions] if open_positions else []
 
-            # If Ticket A has closed (hit TP1) but Ticket B is still open
+            # 1. If both tickets are closed, remove from tracking immediately
+            if pos_info.ticket_a not in open_tickets and pos_info.ticket_b not in open_tickets:
+                reason = "RUNNER CLOSED (TP2 / BE / SL)" if pos_info.runner_moved_to_be else "CLOSED (TP / SL / MANUAL)"
+                print(f"[{symbol}] Position #{pos_info.ticket_b} closed in MT5 ({reason}). Cleared from active tracking.")
+                self.notifier.notify_trade_closed(symbol, pos_info.ticket_b, reason, 0.0)
+                del self.active_positions[symbol]
+                continue
+
+            # 2. If runner already moved to BE, skip breakeven modification
+            if pos_info.runner_moved_to_be:
+                continue
+
+            # 3. If Ticket A has closed (hit TP1) but Ticket B is still open -> Move SL to Breakeven
             if pos_info.ticket_a not in open_tickets and pos_info.ticket_b in open_tickets:
                 sym_info = mt5.symbol_info(symbol)
                 digits = sym_info.digits if sym_info else 2
@@ -1473,13 +1483,6 @@ class InstitutionalDCCBot:
                 else:
                     err_msg = res_mod.comment if res_mod else "None"
                     print(f"[{symbol}] Breakeven modification pending ({err_msg}). Will retry next tick.")
-
-            # If both tickets are closed, remove from tracking
-            if pos_info.ticket_a not in open_tickets and pos_info.ticket_b not in open_tickets:
-                reason = "RUNNER CLOSED (TP2 / BE / SL)" if pos_info.runner_moved_to_be else "CLOSED (TP / SL / MANUAL)"
-                print(f"[{symbol}] Position #{pos_info.ticket_b} closed ({reason}).")
-                self.notifier.notify_trade_closed(symbol, pos_info.ticket_b, reason, 0.0)
-                del self.active_positions[symbol]
 
     def get_session_state(self, hour: int) -> str:
         """Returns the trading window / killzone state for a given UTC hour."""

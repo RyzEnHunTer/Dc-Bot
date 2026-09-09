@@ -1530,10 +1530,12 @@
       select.innerHTML = '';
 
       const publicNames = {
-        'cb_5m_liquidity_sweep': 'DCC Institutional Core Flagship Portfolio',
-        'circuit_breaker_3pct': 'DCC Capital Preservation Portfolio',
-        'optimized_low_dd': 'DCC Dynamic Low-Drawdown Portfolio',
-        'strict_6month': 'DCC Standard Execution Baseline'
+        'chained_official': 'DCC Institutional Flagship (Jan - Sep 2026)',
+        'phase2_official': 'DCC Institutional Flagship (Phase 2: Jul - Sep 2026)',
+        'phase1_official': 'DCC Institutional Flagship (Phase 1: Jan - Jun 2026)',
+        'phase2_no_sweep': 'DCC Momentum Portfolio (Phase 2)',
+        'circuit_breaker_3pct': 'DCC Capital Preservation Portfolio (H1 2026)',
+        'optimized_low_dd': 'DCC Dynamic Low-Drawdown Portfolio'
       };
 
       for (const [key, strat] of Object.entries(payload.strategies)) {
