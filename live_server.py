@@ -167,11 +167,24 @@ def fetch_candles_with_indicators(symbol: str, tf_str: str = "5M", count: int = 
     for b in bars:
         b['time'] = int(b['time'])
 
+    server_time = int(time.time())
+    if MT5_AVAILABLE and mt5.initialize():
+        try:
+            tick = mt5.symbol_info_tick(matched_sym)
+            if tick and tick.time > 0:
+                server_time = int(tick.time)
+        except Exception:
+            pass
+
+    step_s = 60 if tf_str == "1M" else (300 if tf_str == "5M" else (900 if tf_str == "15M" else (1800 if tf_str == "30M" else 3600)))
+
     payload = {
         "symbol": symbol,
         "timeframe": tf_str,
         "h1_e20": h1_e20_val,
         "latest_price": bars[-1]["close"] if bars else 0.0,
+        "server_time": server_time,
+        "timeframe_seconds": step_s,
         "bars": bars
     }
     _CANDLE_CACHE[cache_key] = {"ts": now_ts, "payload": payload}

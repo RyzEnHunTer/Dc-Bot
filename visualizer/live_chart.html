@@ -351,6 +351,120 @@
       border-radius: 2px;
     }
 
+    /* TradingView Candle Countdown Pill & High-Z-Index Price Scale Badge */
+    .watermark-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .watermark-countdown-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255, 179, 0, 0.12);
+      border: 1px solid rgba(255, 179, 0, 0.4);
+      border-radius: var(--radius-sm);
+      padding: 2px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 800;
+      color: #ffb300;
+      letter-spacing: 0.5px;
+      transition: all 0.2s ease;
+    }
+
+    .watermark-countdown-pill.urgent {
+      background: rgba(0, 230, 118, 0.2);
+      border-color: rgba(0, 230, 118, 0.6);
+      color: #00e676;
+    }
+
+    /* High Z-Index TradingView Dual Price & Countdown Scale Overlay */
+    .tv-candle-countdown {
+      position: absolute;
+      right: 0;
+      transform: translateY(-50%);
+      z-index: 9999 !important; /* Always in front of EMA, VWAP, price line labels & canvas */
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 4px 0 0 4px;
+      background: #1e222d;
+      border: 1px solid #2962ff;
+      border-right: none;
+      box-shadow: -3px 3px 12px rgba(0, 0, 0, 0.65);
+      transition: top 0.04s ease-out;
+    }
+
+    [data-theme="light"] .tv-candle-countdown {
+      background: #ffffff;
+      border-color: #2962ff;
+      box-shadow: -3px 3px 10px rgba(0, 0, 0, 0.22);
+    }
+
+    .tv-countdown-timer-wrap {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .countdown-pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ffb300;
+      display: inline-block;
+      box-shadow: 0 0 6px #ffb300;
+      animation: countdown-dot-pulse 1.2s infinite alternate;
+    }
+
+    .tv-countdown-digits {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 800;
+      color: #ffb300;
+      letter-spacing: 0.4px;
+    }
+
+    .tv-countdown-divider {
+      width: 1px;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    [data-theme="light"] .tv-countdown-divider {
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .tv-countdown-price {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+
+    .tv-candle-countdown.urgent {
+      border-color: #00e676;
+      box-shadow: -3px 3px 14px rgba(0, 230, 118, 0.6);
+    }
+
+    .tv-candle-countdown.urgent .countdown-pulse-dot {
+      background: #00e676;
+      box-shadow: 0 0 8px #00e676;
+    }
+
+    .tv-candle-countdown.urgent .tv-countdown-digits {
+      color: #00e676;
+    }
+
+    @keyframes countdown-dot-pulse {
+      0% { opacity: 0.4; transform: scale(0.8); }
+      100% { opacity: 1; transform: scale(1.2); }
+    }
+
     /* Floating Trade Geometry Overlay Card */
     .trade-overlay-card {
       position: absolute;
@@ -622,9 +736,25 @@
       <!-- Separate Dedicated Chart Container for NAS100 (Guarantees Price Scale Persistence) -->
       <div id="chart-container-NAS100" class="chart-canvas-instance"></div>
 
+      <!-- TradingView High-Z-Index Price & Candle Countdown Badge (In Front of All Indicator Labels) -->
+      <div id="tv-candle-countdown" class="tv-candle-countdown" style="display:none;">
+        <div class="tv-countdown-timer-wrap">
+          <span class="countdown-pulse-dot"></span>
+          <span class="tv-countdown-digits" id="tv-countdown-digits">--:--</span>
+        </div>
+        <span class="tv-countdown-divider"></span>
+        <span class="tv-countdown-price" id="tv-countdown-price">0.00</span>
+      </div>
+
       <!-- Live Dynamic Watermark / Indicator Legend -->
       <div class="chart-watermark">
-        <div class="watermark-sym" id="watermark-title">XAUUSD • 5M</div>
+        <div class="watermark-title-row">
+          <div class="watermark-sym" id="watermark-title">XAUUSD • 5M</div>
+          <div class="watermark-countdown-pill" id="watermark-countdown-pill" title="Candle close countdown">
+            <span class="countdown-pulse-dot"></span>
+            <span id="watermark-countdown-val">--:--</span>
+          </div>
+        </div>
         <div class="watermark-sub">
           <span class="legend-item"><span class="legend-line" style="background:#2962ff"></span> EMA9: <b id="leg-ema9">0.00</b></span>
           <span class="legend-item"><span class="legend-line" style="background:#f57c00"></span> EMA20: <b id="leg-ema20">0.00</b></span>
@@ -719,6 +849,15 @@
     let currentSymbol = "XAUUSD";
     let currentTimeframe = "5M";
     let currentTheme = localStorage.getItem('dcc_theme') || 'light'; // Default: Institutional Light Monochrome
+    let serverTimeOffset = 0; // Broker server timestamp offset relative to client clock
+
+    const TF_SECONDS = {
+      '1M': 60,
+      '5M': 300,
+      '15M': 900,
+      '30M': 1800,
+      '1H': 3600
+    };
 
     // Theme Config Palettes
     const THEMES = {
@@ -858,13 +997,23 @@
         h1e20Series,
         priceLines: [],
         loaded: false,
-        lastBars: []
+        lastBars: [],
+        timeframeSeconds: 300
       };
+
+      // Real-time visible range and mouse move listeners for instantaneous countdown repositioning
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        if (symbol === currentSymbol) updateCountdown();
+      });
+      container.addEventListener('mousemove', () => {
+        if (symbol === currentSymbol) updateCountdown();
+      });
 
       // Auto resize listener
       window.addEventListener('resize', () => {
         if (container.style.display !== 'none') {
           chart.resize(container.clientWidth, container.clientHeight);
+          if (symbol === currentSymbol) updateCountdown();
         }
       });
     }
@@ -1112,6 +1261,11 @@
         const data = await res.json();
         if (!data || !data.bars || data.bars.length === 0) return;
 
+        if (data.server_time) {
+          serverTimeOffset = data.server_time - (Date.now() / 1000);
+        }
+        sc.timeframeSeconds = data.timeframe_seconds || (TF_SECONDS[currentTimeframe] || 300);
+
         const ohlc = [];
         const e9 = [];
         const e20 = [];
@@ -1140,9 +1294,10 @@
           sc.loaded = true;
         }
 
-        // Update Legend if this is the active symbol
+        // Update Legend & Countdown if this is the active symbol
         if (symbol === currentSymbol) {
           updateWatermarkAndLegend(data.bars);
+          updateCountdown();
         }
       } catch (err) {
         console.error(`Error loading candles for ${symbol}:`, err);
@@ -1165,6 +1320,64 @@
 
       const lastTime = new Date(last.time * 1000).toUTCString().split(" ")[4];
       document.getElementById('status-last-candle').innerText = `Last Bar: ${lastTime} UTC`;
+      updateCountdown();
+    }
+
+    // Real-Time TradingView Candle Countdown Engine (Rendered in FRONT of all indicator labels)
+    function updateCountdown() {
+      const sc = symbolCharts[currentSymbol];
+      if (!sc || !sc.lastBars || sc.lastBars.length === 0) return;
+
+      const lastBar = sc.lastBars[sc.lastBars.length - 1];
+      const curPrice = lastBar.close;
+      const tfSec = sc.timeframeSeconds || TF_SECONDS[currentTimeframe] || 300;
+
+      // Calculate current estimated broker server time
+      const estServerNow = (Date.now() / 1000) + serverTimeOffset;
+
+      // Next candle close timestamp
+      const candleCloseTime = lastBar.time + tfSec;
+      const secondsLeft = Math.max(0, Math.floor(candleCloseTime - estServerNow));
+
+      const min = Math.floor(secondsLeft / 60);
+      const sec = secondsLeft % 60;
+      const timeStr = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
+
+      // Update Floating Countdown Badge on Right Price Scale
+      const countdownEl = document.getElementById('tv-candle-countdown');
+      const digitsEl = document.getElementById('tv-countdown-digits');
+      const priceEl = document.getElementById('tv-countdown-price');
+      const watermarkCountdownVal = document.getElementById('watermark-countdown-val');
+      const watermarkCountdownPill = document.getElementById('watermark-countdown-pill');
+
+      if (digitsEl) digitsEl.innerText = timeStr;
+      if (priceEl) priceEl.innerText = curPrice.toFixed(2);
+      if (watermarkCountdownVal) watermarkCountdownVal.innerText = timeStr;
+
+      // Urgent pulse styling when <= 15s (DCC pre-arm & trigger window)
+      const isUrgent = (secondsLeft <= 15 && secondsLeft > 0);
+      if (countdownEl) {
+        countdownEl.classList.toggle('urgent', isUrgent);
+        if (watermarkCountdownPill) watermarkCountdownPill.classList.toggle('urgent', isUrgent);
+
+        // Position badge exactly at current market price Y-coordinate on right price scale
+        const y = sc.candleSeries.priceToCoordinate(curPrice);
+        if (y !== null && y >= 0 && y <= sc.container.clientHeight) {
+          countdownEl.style.top = `${y}px`;
+          countdownEl.style.display = 'flex';
+        } else {
+          countdownEl.style.display = 'none';
+        }
+      }
+
+      // If candle hit close boundary (0s), auto-refresh candles to seamlessly catch new bar open
+      if (secondsLeft === 0 && !sc.refreshPending) {
+        sc.refreshPending = true;
+        setTimeout(() => {
+          loadCandlesForSymbol(currentSymbol, false);
+          sc.refreshPending = false;
+        }, 1200);
+      }
     }
 
     // Switch Symbol with Full Price Scale and Scroll Persistence
@@ -1402,6 +1615,12 @@
         if (!isTabActive) return;
         loadCandlesForSymbol(currentSymbol, false); // Refresh active symbol every 3.5s
       }, 3500);
+
+      // 8. Real-time TradingView Candle Countdown (200ms precision)
+      setInterval(() => {
+        if (!isTabActive) return;
+        updateCountdown();
+      }, 200);
     });
   </script>
 </body>
