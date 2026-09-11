@@ -51,44 +51,14 @@ def kill_existing_services():
         subprocess.run(["taskkill", "/F", "/IM", "ngrok.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def ensure_ngrok() -> str:
-    """Ensures ngrok.exe is installed, up-to-date (v3.19+), and operational."""
-    # 1. Local workspace executable
+def find_ngrok() -> str:
+    """Locates ngrok executable from local directory or system PATH."""
     if os.path.exists(NGROK_EXE):
-        try:
-            res = subprocess.run([NGROK_EXE, "version"], capture_output=True, text=True, timeout=5)
-            ver_str = res.stdout.strip()
-            # If older than 3.19, auto-update to latest
-            if any(old_v in ver_str for old_v in [" 3.0.", " 3.1.", " 3.2.", " 3.3.", " 3.4.", " 3.5.", " 3.6.", " 3.7.", " 3.8.", " 3.9.", " 3.10.", " 3.11.", " 3.12.", " 3.13.", " 3.14.", " 3.15.", " 3.16.", " 3.17.", " 3.18."]):
-                print(f"[*] Upgrading outdated ngrok agent ({ver_str})...")
-                subprocess.run([NGROK_EXE, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
-            return NGROK_EXE
-        except Exception:
-            return NGROK_EXE
-
-    # 2. System PATH
+        return NGROK_EXE
     found = shutil.which("ngrok")
     if found:
         return found
-
-    # 3. Automatically download official release if on fresh VPS
-    print("[*] Setting up ngrok.exe on VPS...")
-    zip_path = os.path.join(BASE_DIR, "ngrok_temp.zip")
-    try:
-        urllib.request.urlretrieve(NGROK_ZIP_URL, zip_path)
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extract("ngrok.exe", BASE_DIR)
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
-        try:
-            subprocess.run([NGROK_EXE, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
-        except Exception:
-            pass
-        print("[OK] ngrok.exe installed and updated successfully!")
-        return NGROK_EXE
-    except Exception as e:
-        print(f"[!] Warning: Failed to download ngrok automatically ({e}). Continuing without tunnel.")
-        return ""
+    return ""
 
 
 def configure_authtoken(ngrok_bin: str):
@@ -174,7 +144,7 @@ def main():
         # Step 2: Start Permanent Web Tunnel (if enabled)
         tunnel_active = False
         if use_tunnel:
-            ngrok_bin = ensure_ngrok()
+            ngrok_bin = find_ngrok()
             if ngrok_bin:
                 configure_authtoken(ngrok_bin)
                 print(f"[*] [2/3] Launching Permanent Web Tunnel -> https://{PERMANENT_DOMAIN} (Low CPU Priority)...")
@@ -196,7 +166,9 @@ def main():
                 else:
                     tunnel_active = True
             else:
-                print("[!] Skipping tunnel (ngrok executable not available).")
+                print("[!] ngrok executable not found in system PATH or local directory.")
+                print("[!] Run 'python setup_vps.py' to automatically install & configure ngrok.")
+                print("[*] Continuing in Local Browser mode only.")
         else:
             print("[*] [2/3] Tunnel disabled (--no-tunnel flag detected).")
 

@@ -39,6 +39,7 @@ tests/*test_accounts_config.json
 tests/*test_bot_accounts_config.json
 
 # Binaries
+ngrok.exe
 cloudflared.exe
 .ngrok.exe.old
 
