@@ -56,6 +56,13 @@ def format_dual_hhmm(utc_hhmm: str) -> str:
         return f"{utc_hhmm}"
 
 
+def format_dollar(val: float, force_sign: bool = True) -> str:
+    """Formats dollar value cleanly with proper +$ or -$ placement."""
+    if val >= 0:
+        return f"+${val:,.2f}" if force_sign else f"${val:,.2f}"
+    return f"-${abs(val):,.2f}"
+
+
 class NotificationManager:
     """Manages remote alerts for Telegram or Discord in a non-blocking background queue."""
 
@@ -332,45 +339,142 @@ class NotificationManager:
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
-    def notify_tp1_breakeven(self, symbol: str, ticket_a: int, ticket_b: int, be_sl: float):
+    def notify_tp1_breakeven(self, symbol: str, ticket_a: int, ticket_b: int, be_sl: float, profit_a: float = 0.0):
         """Notifies when Ticket A hits TP1 and Runner SL is moved to Breakeven."""
         now_str = format_dual_time(include_date=False)
+        pnl_str = f"• 💰 <b>Profit Banked (Order A):</b> <b>{format_dollar(profit_a)}</b>\n" if profit_a != 0.0 else ""
         tg_text = (
             f"🎯 <b>TARGET 1 HIT: {symbol} (+50% PROFIT LOCKED)</b>\n\n"
             f"• Ticket #{ticket_a} closed at TP1!\n"
+            f"{pnl_str}"
             f"• 🛡️ <b>BREAKEVEN AUTOMATOR:</b> Runner #{ticket_b} Stop Loss shifted to <b>{be_sl:,.2f}</b> (Entry + Spread)!\n"
             f"• <b>Status: Trade is now 100% RISK-FREE!</b>\n"
             f"• <b>Time:</b> {now_str}"
         )
 
+        discord_fields = [
+            {"name": "Order A Closed", "value": f"#{ticket_a} (TP1 Hit)", "inline": True},
+            {"name": "Runner SL (BE)", "value": f"`{be_sl:,.2f}`", "inline": True}
+        ]
+        if profit_a != 0.0:
+            discord_fields.insert(1, {"name": "Profit Locked", "value": f"**{format_dollar(profit_a)}**", "inline": True})
+        else:
+            discord_fields.insert(1, {"name": "Status", "value": "100% Risk-Free", "inline": True})
+
+        pnl_desc = f"**Profit Banked: {format_dollar(profit_a)}**\n" if profit_a != 0.0 else ""
         discord_embed = {
             "title": f"🎯 TARGET 1 HIT: {symbol} (+50% PROFIT LOCKED)",
-            "description": f"Ticket #{ticket_a} hit TP1! Runner #{ticket_b} SL shifted to **{be_sl:,.2f}** (Entry + Spread). **Trade is now 100% Risk-Free!**",
+            "description": f"Ticket #{ticket_a} hit TP1!\n{pnl_desc}🛡️ Runner #{ticket_b} SL shifted to **{be_sl:,.2f}** (Entry + Spread). **Trade is now 100% Risk-Free!**",
             "color": 0x00FFAA,
+            "fields": discord_fields,
             "footer": {"text": f"Locked at {now_str}"}
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
-    def notify_trade_closed(self, symbol: str, ticket: int, exit_reason: str, pnl: float):
-        """Notifies when an open position or runner is closed."""
+    def notify_trade_closed(
+        self,
+        symbol: str,
+        ticket: int,
+        exit_reason: str,
+        pnl: float,
+        ticket_a: Optional[int] = None,
+        pnl_a: Optional[float] = None,
+        pnl_b: Optional[float] = None,
+        day_pnl: Optional[float] = None,
+        day_pnl_pct: Optional[float] = None,
+        daily_dd_pct: Optional[float] = None,
+        remaining_cushion: Optional[float] = None,
+        daily_cb_pct: Optional[float] = None
+    ):
+        """Notifies when an open position or runner is closed with full breakdown & daily metrics."""
         now_str = format_dual_time(include_date=False)
-        icon = "🚀" if pnl > 0 else ("🛡️" if abs(pnl) < 1.0 else "🛑")
-        color = 0x00FF88 if pnl > 0 else (0x888888 if abs(pnl) < 1.0 else 0xFF4444)
+        
+        # Determine Icon & Status Color
+        clean_reason = exit_reason.upper()
+        if "TP2" in clean_reason or "TAKE PROFIT" in clean_reason:
+            icon = "🎯"
+            color = 0x00FF88
+            header_status = "FULL TP2 WINNER"
+        elif "BREAKEVEN" in clean_reason:
+            icon = "🛡️"
+            color = 0x00D4FF
+            header_status = "RUNNER AT BREAKEVEN"
+        elif pnl < 0 or "STOP LOSS" in clean_reason:
+            icon = "🛑"
+            color = 0xFF4444
+            header_status = "STOP LOSS HIT"
+        else:
+            icon = "🚀" if pnl > 0 else ("🛡️" if abs(pnl) < 1.0 else "🛑")
+            color = 0x00FF88 if pnl > 0 else (0x888888 if abs(pnl) < 1.0 else 0xFF4444)
+            header_status = "TRADE CLOSED"
+
+        # Build Order Breakdown
+        breakdown_lines = []
+        if pnl_a is not None and pnl_b is not None and ticket_a is not None:
+            breakdown_lines.append(f"• <b>Order A (#{ticket_a}):</b> {format_dollar(pnl_a)}")
+            breakdown_lines.append(f"• <b>Order B (#{ticket}):</b> {format_dollar(pnl_b)}")
+        breakdown_str = ("\n" + "\n".join(breakdown_lines) + "\n") if breakdown_lines else ""
+
+        # Build Daily Performance Metrics
+        daily_lines = []
+        if day_pnl is not None:
+            pct_str = f" ({day_pnl_pct:+.2f}%)" if day_pnl_pct is not None else ""
+            daily_lines.append(f"• <b>Today's Net PnL:</b> <b>{format_dollar(day_pnl)}</b>{pct_str}")
+        if daily_dd_pct is not None:
+            daily_lines.append(f"• <b>Daily Drawdown:</b> -{daily_dd_pct:.2f}%")
+        if remaining_cushion is not None:
+            cb_str = f"{daily_cb_pct:.1f}% CB" if daily_cb_pct else "Circuit Breaker"
+            daily_lines.append(f"• <b>Daily CB Cushion:</b> ${remaining_cushion:,.2f} remaining before {cb_str}")
+        daily_str = ("\n📊 <b>Daily Performance Summary:</b>\n" + "\n".join(daily_lines) + "\n") if daily_lines else ""
 
         tg_text = (
-            f"{icon} <b>TRADE CLOSED: {symbol} #{ticket}</b>\n\n"
+            f"{icon} <b>TRADE CLOSED: {symbol} — {header_status}</b>\n\n"
             f"• <b>Outcome:</b> {exit_reason}\n"
-            f"• <b>Net PnL:</b> {'+' if pnl >= 0 else ''}${pnl:,.2f}\n"
-            f"• <b>Time:</b> {now_str}"
+            f"{breakdown_str}"
+            f"• <b>Total Trade PnL:</b> <b>{format_dollar(pnl)}</b>\n"
+            f"{daily_str}"
+            f"• <b>Closed at:</b> {now_str}"
         )
 
+        discord_fields = [
+            {"name": "Outcome", "value": exit_reason, "inline": True},
+            {"name": "Total Trade PnL", "value": f"**{format_dollar(pnl)}**", "inline": True}
+        ]
+
+        if pnl_a is not None and pnl_b is not None and ticket_a is not None:
+            discord_fields.append({
+                "name": "Order Breakdown",
+                "value": f"Order A (#{ticket_a}): `{format_dollar(pnl_a)}`\nOrder B (#{ticket}): `{format_dollar(pnl_b)}`",
+                "inline": False
+            })
+
+        if day_pnl is not None:
+            pct_str = f" ({day_pnl_pct:+.2f}%)" if day_pnl_pct is not None else ""
+            discord_fields.append({
+                "name": "Today's Net PnL",
+                "value": f"**{format_dollar(day_pnl)}**{pct_str}",
+                "inline": True
+            })
+
+        if daily_dd_pct is not None:
+            discord_fields.append({
+                "name": "Daily Drawdown",
+                "value": f"`-{daily_dd_pct:.2f}%`",
+                "inline": True
+            })
+
+        if remaining_cushion is not None:
+            cb_str = f"{daily_cb_pct:.1f}% CB" if daily_cb_pct else "Circuit Breaker"
+            discord_fields.append({
+                "name": "Remaining CB Cushion",
+                "value": f"`${remaining_cushion:,.2f}` (to {cb_str})",
+                "inline": True
+            })
+
         discord_embed = {
-            "title": f"{icon} TRADE CLOSED: {symbol} #{ticket}",
+            "title": f"{icon} TRADE CLOSED: {symbol} — {header_status}",
             "color": color,
-            "fields": [
-                {"name": "Outcome", "value": exit_reason, "inline": True},
-                {"name": "Net PnL", "value": f"{'+' if pnl >= 0 else ''}${pnl:,.2f}", "inline": True}
-            ],
+            "fields": discord_fields,
             "footer": {"text": f"Closed at {now_str}"}
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})

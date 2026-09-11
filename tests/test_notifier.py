@@ -138,7 +138,8 @@ class TestNotificationEngine(unittest.TestCase):
             13: "PAUSED_TRAP_13",
             14: "ACTIVE_NY",
             18: "ACTIVE_NY",
-            20: "ACTIVE_NY",
+            19: "PAUSED_ASIAN",
+            20: "PAUSED_ASIAN",
             21: "PAUSED_ASIAN",
             22: "PAUSED_ASIAN",
             23: "PAUSED_ASIAN",
@@ -150,7 +151,95 @@ class TestNotificationEngine(unittest.TestCase):
 
         print("[PASS] Session and Killzone state machine accurately maps 24-hour cycle.")
 
+    def test_rich_trade_notifications(self):
+        """Verifies rich trade notifications: TP1 profit, order breakdowns, daily PnL, and CB cushions."""
+        cfg = {
+            "active_platform": "discord",
+            "discord_webhook_url": "https://discord.com/api/webhooks/test"
+        }
+        nm = NotificationManager(cfg)
+        
+        # Test TP1 alert with banked profit
+        nm.notify_tp1_breakeven("XAUUSD", 5699492095, 5699492096, 4357.08, profit_a=54.04)
+        _, item = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("+$54.04", item["text"])
+        self.assertIn("4,357.08", item["text"])
+        self.assertEqual(item["embed"]["fields"][1]["name"], "Profit Locked")
+        self.assertIn("+$54.04", item["embed"]["fields"][1]["value"])
+
+        # Test Full TP2 winner trade closed alert
+        nm.notify_trade_closed(
+            symbol="XAUUSD",
+            ticket=5699492096,
+            exit_reason="🎯 FULL TAKE PROFIT 2 (2.0R)",
+            pnl=96.44,
+            ticket_a=5699492095,
+            pnl_a=54.04,
+            pnl_b=42.40,
+            day_pnl=96.44,
+            day_pnl_pct=1.93,
+            daily_dd_pct=0.0,
+            remaining_cushion=150.0,
+            daily_cb_pct=3.0
+        )
+        _, item2 = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("FULL TP2 WINNER", item2["text"])
+        self.assertIn("+$54.04", item2["text"])
+        self.assertIn("+$42.40", item2["text"])
+        self.assertIn("+$96.44", item2["text"])
+        self.assertIn("+1.93%", item2["text"])
+        self.assertIn("$150.00", item2["text"])
+        self.assertEqual(item2["embed"]["color"], 0x00FF88)
+
+        # Test Breakeven runner trade closed alert
+        nm.notify_trade_closed(
+            symbol="XAUUSD",
+            ticket=5699139416,
+            exit_reason="🛡️ RUNNER STOPPED AT BREAKEVEN (0.0R)",
+            pnl=52.66,
+            ticket_a=5699139415,
+            pnl_a=52.16,
+            pnl_b=0.50,
+            day_pnl=52.66,
+            day_pnl_pct=1.05,
+            daily_dd_pct=0.0,
+            remaining_cushion=150.0,
+            daily_cb_pct=3.0
+        )
+        _, item3 = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("RUNNER AT BREAKEVEN", item3["text"])
+        self.assertIn("+$52.16", item3["text"])
+        self.assertIn("+$0.50", item3["text"])
+        self.assertIn("+$52.66", item3["text"])
+        self.assertEqual(item3["embed"]["color"], 0x00D4FF)
+
+        # Test Stop Loss trade closed alert
+        nm.notify_trade_closed(
+            symbol="NAS100",
+            ticket=5699999992,
+            exit_reason="🛑 STOP LOSS HIT (-1.0R Initial Stop)",
+            pnl=-50.00,
+            ticket_a=5699999991,
+            pnl_a=-25.00,
+            pnl_b=-25.00,
+            day_pnl=-50.00,
+            day_pnl_pct=-1.00,
+            daily_dd_pct=1.00,
+            remaining_cushion=100.0,
+            daily_cb_pct=3.0
+        )
+        _, item4 = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("STOP LOSS HIT", item4["text"])
+        self.assertIn("-$25.00", item4["text"])
+        self.assertIn("-$50.00", item4["text"])
+        self.assertIn("-1.00%", item4["text"])
+        self.assertIn("$100.00", item4["text"])
+        self.assertEqual(item4["embed"]["color"], 0xFF4444)
+
+        print("[PASS] Rich trade notifications verified: TP1 profit, breakdowns, daily PnL & cushions.")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

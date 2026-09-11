@@ -418,6 +418,21 @@ def main():
         }
         print(f"-> Chained Portfolio: {len(chained_trades)} total trades.")
 
+    # Strategy: Official Chained WITHOUT EOD Exit (Continuous Holding)
+    no_eod_csv = os.path.join(PROJECT_ROOT, "reports", "trades_official_no_eod_continuous.csv")
+    if os.path.exists(no_eod_csv):
+        no_eod_trades = parse_trades(no_eod_csv, candles)
+        for i, tr in enumerate(no_eod_trades, 1):
+            tr['trade_id'] = i
+        strategies["chained_official_no_eod"] = {
+            "name": "Official Strategy - NO EOD Close (Holding Overnight)",
+            "description": "Continuous multi-session holding without artificial 21:00 UTC cutoff (471 trades, +195.8% ROI, $9,790 Net Profit).",
+            "metrics": compute_metrics(no_eod_trades),
+            "trades": no_eod_trades
+        }
+        print(f"-> Official NO-EOD Strategy: {len(no_eod_trades)} continuous trades.")
+
+
     # Strategy: Phase 2 Dedicated (July 1 - September 8, 2026)
     if p2_trades:
         strategies["phase2_official"] = {

@@ -37,3 +37,13 @@ logs/
 # Unit Test Artifacts
 tests/*test_accounts_config.json
 tests/*test_bot_accounts_config.json
+
+ngrok.exe
+
+cloudflared.exe
+
+.ngrok.exe.old
+
+# Dynamic Live State Files
+visualizer/live_state.json
+visualizer/*.tmp

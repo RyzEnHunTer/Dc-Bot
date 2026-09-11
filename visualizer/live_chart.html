@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DCC Institutional Strategy - Live TradingView Radar & Charting Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="lightweight-charts.standalone.production.js"></script>
+  <style>
+    /* Default: Institutional Light Monochrome Palette (TradingView Style from User Screenshot) */
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8f9fa;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f1f3f6;
+      --border-color: #e0e3eb;
+      --border-subtle: #edf0f5;
+      --text-main: #131722;
+      --text-muted: #787b86;
+      --text-bright: #131722;
+      --accent-blue: #2962ff;
+      --accent-blue-hover: #1e53e5;
+      --color-bull: #363c4e;
+      --color-bear: #b2b5be;
+      --color-green: #00897b;
+      --color-red: #d32f2f;
+      --color-amber: #f57c00;
+      --color-purple: #7b1fa2;
+      --color-cyan: #00838f;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --card-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
+    }
+
+    /* Dark Mode Palette */
+    [data-theme="dark"] {
+      --bg-primary: #131722;
+      --bg-secondary: #1e222d;
+      --bg-card: #242936;
+      --bg-card-hover: #2d3344;
+      --border-color: #2e3444;
+      --border-subtle: #222733;
+      --text-main: #d1d4dc;
+      --text-muted: #787b86;
+      --text-bright: #ffffff;
+      --accent-blue: #2962ff;
+      --accent-blue-hover: #1e53e5;
+      --color-bull: #434651;
+      --color-bear: #9598a1;
+      --color-green: #26a69a;
+      --color-red: #ef5350;
+      --color-amber: #ff9800;
+      --color-purple: #ab47bc;
+      --color-cyan: #00e5ff;
+      --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    /* Top Navigation Header */
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 100;
+      flex-shrink: 0;
+      gap: 14px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 14px;
+      color: var(--text-bright);
+      letter-spacing: -0.3px;
+    }
+
+    .pulse-dot {
+      width: 9px;
+      height: 9px;
+      background-color: #00c853;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #00c853;
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 200, 83, 0.7); }
+      70% { transform: scale(1.15); box-shadow: 0 0 0 7px rgba(0, 200, 83, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 200, 83, 0); }
+    }
+
+    /* Symbol & Timeframe Switchers */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .segmented-control {
+      display: flex;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 2px;
+      gap: 2px;
+    }
+
+    .segment-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 5px 11px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .segment-btn:hover {
+      color: var(--text-bright);
+      background: rgba(0, 0, 0, 0.04);
+    }
+
+    [data-theme="dark"] .segment-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .segment-btn.active {
+      background: var(--color-bull);
+      color: #ffffff;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    [data-theme="dark"] .segment-btn.active {
+      background: var(--accent-blue);
+      color: #ffffff;
+      box-shadow: 0 2px 6px rgba(41, 98, 255, 0.4);
+    }
+
+    .tf-btn {
+      padding: 5px 9px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+
+    .fit-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 5px 9px;
+      border-radius: var(--radius-md);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .fit-btn:hover {
+      color: var(--text-bright);
+      border-color: var(--accent-blue);
+    }
+
+    .theme-toggle-btn {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 5px 9px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+
+    .theme-toggle-btn:hover {
+      color: var(--text-bright);
+      border-color: var(--text-muted);
+    }
+
+    /* Account Telemetry Radar */
+    .telemetry-radar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+    }
+
+    .radar-kpi {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .radar-kpi .label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.3px;
+    }
+
+    .radar-kpi .val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+
+    .val.green { color: #00897b; }
+    .val.red { color: #d32f2f; }
+    .val.cyan { color: #00838f; }
+    .val.amber { color: #f57c00; }
+
+    [data-theme="dark"] .val.green { color: #00e676; }
+    [data-theme="dark"] .val.red { color: #ef5350; }
+    [data-theme="dark"] .val.cyan { color: #00e5ff; }
+    [data-theme="dark"] .val.amber { color: #ff9800; }
+
+    .session-badge {
+      background: rgba(41, 98, 255, 0.1);
+      border: 1px solid rgba(41, 98, 255, 0.25);
+      color: #2962ff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    [data-theme="dark"] .session-badge {
+      background: rgba(41, 98, 255, 0.2);
+      border: 1px solid rgba(41, 98, 255, 0.4);
+      color: #64b5f6;
+    }
+
+    /* Main Chart Layout */
+    .main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #chart-wrapper {
+      flex: 1;
+      height: 100%;
+      position: relative;
+      background: var(--bg-primary);
+    }
+
+    /* Distinct Chart Containers for Persistence */
+    .chart-canvas-instance {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+      transition: opacity 0.1s ease;
+    }
+
+    .chart-canvas-instance.active {
+      opacity: 1;
+      pointer-events: auto;
+      visibility: visible;
+    }
+
+    /* Dynamic Watermark / Indicator Legend */
+    .chart-watermark {
+      position: absolute;
+      top: 12px;
+      left: 16px;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .watermark-sym {
+      font-weight: 800;
+      font-size: 19px;
+      color: var(--text-bright);
+      letter-spacing: -0.4px;
+    }
+
+    .watermark-sub {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--text-muted);
+    }
+
+    .legend-item b {
+      color: var(--text-bright);
+    }
+
+    .legend-line {
+      width: 10px;
+      height: 3px;
+      border-radius: 2px;
+    }
+
+    /* Floating Trade Geometry Overlay Card */
+    .trade-overlay-card {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      background: var(--bg-card);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      z-index: 20;
+      min-width: 250px;
+      box-shadow: var(--card-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .trade-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 6px;
+    }
+
+    .trade-status-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: var(--radius-sm);
+      text-transform: uppercase;
+    }
+
+    .badge-buy { background: rgba(0, 137, 123, 0.15); color: var(--color-green); border: 1px solid rgba(0, 137, 123, 0.3); }
+    .badge-sell { background: rgba(211, 47, 47, 0.15); color: var(--color-red); border: 1px solid rgba(211, 47, 47, 0.3); }
+    .badge-idle { background: rgba(120, 123, 134, 0.15); color: var(--text-muted); }
+
+    .trade-metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+    }
+
+    .metric-name { color: var(--text-muted); }
+    .metric-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text-bright); }
+
+    /* Bottom Deal History Stream */
+    .bottom-bar {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+      height: 36px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 11px;
+      color: var(--text-muted);
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-item .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #00c853;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation & Radar Header -->
+  <header>
+    <div class="header-left">
+      <div class="brand-logo">
+        <div class="pulse-dot"></div>
+        <span>DCC INSTITUTIONAL RADAR</span>
+      </div>
+
+      <!-- Symbol Selector -->
+      <div class="segmented-control" id="symbol-selector">
+        <button class="segment-btn active" data-sym="XAUUSD">XAUUSD</button>
+        <button class="segment-btn" data-sym="NAS100">NAS100</button>
+      </div>
+
+      <!-- Timeframe Selector (1M, 5M, 15M, 30M, 1H) -->
+      <div class="segmented-control" id="tf-selector">
+        <button class="segment-btn tf-btn" data-tf="1M">1M</button>
+        <button class="segment-btn tf-btn active" data-tf="5M">5M</button>
+        <button class="segment-btn tf-btn" data-tf="15M">15M</button>
+        <button class="segment-btn tf-btn" data-tf="30M">30M</button>
+        <button class="segment-btn tf-btn" data-tf="1H">1H</button>
+      </div>
+
+      <!-- Quick Auto Scale / Recenter Button -->
+      <button class="fit-btn" id="btn-fit-content" title="Auto Scale & Recenter Chart (Zero Scroll)">
+        <span>⤢</span>
+        <span>Auto Fit</span>
+      </button>
+
+      <!-- Theme Switcher (Monochrome Light / Dark) -->
+      <button class="theme-toggle-btn" id="btn-theme-toggle" title="Toggle Light/Dark Theme">
+        <span id="theme-icon">🌙 Dark</span>
+      </button>
+    </div>
+
+    <!-- Live Account Telemetry Radar -->
+    <div class="telemetry-radar">
+      <div class="radar-kpi">
+        <span class="label">Live Equity</span>
+        <span class="val cyan" id="kpi-equity">$0.00</span>
+      </div>
+      <div class="radar-kpi">
+        <span class="label">Balance</span>
+        <span class="val" id="kpi-balance">$0.00</span>
+      </div>
+      <div class="radar-kpi">
+        <span class="label">Today PnL</span>
+        <span class="val green" id="kpi-today-pnl">+$0.00</span>
+      </div>
+      <div class="radar-kpi">
+        <span class="label">Daily DD</span>
+        <span class="val amber" id="kpi-daily-dd">-0.00%</span>
+      </div>
+      <div class="radar-kpi">
+        <span class="label">3% CB Cushion</span>
+        <span class="val green" id="kpi-cushion">$0.00</span>
+      </div>
+      <div class="session-badge" id="kpi-session">ACTIVE_SESSION</div>
+    </div>
+  </header>
+
+  <!-- Main Chart Canvas -->
+  <div class="main-container">
+    <div id="chart-wrapper">
+      <!-- Separate Dedicated Chart Container for XAUUSD (Guarantees Price Scale Persistence) -->
+      <div id="chart-container-XAUUSD" class="chart-canvas-instance active"></div>
+
+      <!-- Separate Dedicated Chart Container for NAS100 (Guarantees Price Scale Persistence) -->
+      <div id="chart-container-NAS100" class="chart-canvas-instance"></div>
+
+      <!-- Live Dynamic Watermark / Indicator Legend -->
+      <div class="chart-watermark">
+        <div class="watermark-sym" id="watermark-title">XAUUSD • 5M</div>
+        <div class="watermark-sub">
+          <span class="legend-item"><span class="legend-line" style="background:#2962ff"></span> EMA9: <b id="leg-ema9">0.00</b></span>
+          <span class="legend-item"><span class="legend-line" style="background:#f57c00"></span> EMA20: <b id="leg-ema20">0.00</b></span>
+          <span class="legend-item"><span class="legend-line" style="background:#7b1fa2"></span> VWAP: <b id="leg-vwap">0.00</b></span>
+          <span class="legend-item"><span class="legend-line" style="background:#00838f; border-bottom: 1px dashed #00838f;"></span> 1H EMA20: <b id="leg-h1e20">0.00</b></span>
+        </div>
+      </div>
+
+      <!-- Live Active Trade Geometry Card -->
+      <div class="trade-overlay-card" id="trade-card">
+        <div class="trade-card-header">
+          <span style="font-weight:700; font-size:12px; color:var(--text-bright);">TRADE STATUS</span>
+          <span class="trade-status-badge badge-idle" id="trade-badge">NO POSITION</span>
+        </div>
+        <div class="trade-metric-row">
+          <span class="metric-name">Entry Price</span>
+          <span class="metric-val" id="card-entry">--</span>
+        </div>
+        <div class="trade-metric-row">
+          <span class="metric-name">Stop Loss (1.0R)</span>
+          <span class="metric-val red" id="card-sl">--</span>
+        </div>
+        <div class="trade-metric-row">
+          <span class="metric-name">Target 1 (1.5R)</span>
+          <span class="metric-val green" id="card-tp1">--</span>
+        </div>
+        <div class="trade-metric-row">
+          <span class="metric-name">Target 2 (2.0R)</span>
+          <span class="metric-val green" id="card-tp2">--</span>
+        </div>
+        <div class="trade-metric-row">
+          <span class="metric-name">Breakeven SL</span>
+          <span class="metric-val cyan" id="card-be">--</span>
+        </div>
+        <div class="trade-metric-row" style="border-top:1px solid var(--border-subtle); padding-top:4px;">
+          <span class="metric-name">Floating PnL</span>
+          <span class="metric-val" id="card-pnl">+$0.00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Status Stream -->
+  <div class="bottom-bar">
+    <div class="status-left">
+      <div class="status-item">
+        <span class="dot"></span>
+        <span id="status-bot">BOT CONNECTED & SURVEILLANCE ACTIVE</span>
+      </div>
+      <span>•</span>
+      <span id="status-account">Account: 213877054 (OctaFX-Demo)</span>
+      <span>•</span>
+      <span id="status-last-candle">Last Bar: --</span>
+    </div>
+    <div id="status-clock" style="font-family:'JetBrains Mono', monospace;">--:--:-- UTC</div>
+  </div>
+
+  <!-- TradingView Chart Logic & Multi-Symbol Persistence Engine -->
+  <script>
+    const SYMBOLS = ["XAUUSD", "NAS100"];
+    let currentSymbol = "XAUUSD";
+    let currentTimeframe = "5M";
+    let currentTheme = localStorage.getItem('dcc_theme') || 'light'; // Default: Institutional Light Monochrome
+
+    // Theme Config Palettes
+    const THEMES = {
+      light: {
+        bg: '#ffffff',
+        grid: '#f0f3fa',
+        text: '#131722',
+        border: '#e0e3eb',
+        crosshair: '#9598a1',
+        // Exact user requested settings (Charcoal Bull / Silver-Grey Bear):
+        candleUp: '#363c4e',
+        candleDown: '#b2b5be',
+        candleBorderUp: '#363c4e',
+        candleBorderDown: '#b2b5be',
+        candleWickUp: '#363c4e',
+        candleWickDown: '#b2b5be',
+        ema9: '#2962ff',
+        ema20: '#f57c00',
+        vwap: '#7b1fa2',
+        h1e20: '#00838f',
+        lineEntry: '#2962ff',
+        lineSl: '#d32f2f',
+        lineTp1: '#00897b',
+        lineTp2: '#00c853',
+        lineBe: '#00838f'
+      },
+      dark: {
+        bg: '#131722',
+        grid: '#1e222d',
+        text: '#d1d4dc',
+        border: '#2e3444',
+        crosshair: '#787b86',
+        candleUp: '#434651',
+        candleDown: '#9598a1',
+        candleBorderUp: '#434651',
+        candleBorderDown: '#9598a1',
+        candleWickUp: '#434651',
+        candleWickDown: '#9598a1',
+        ema9: '#2962ff',
+        ema20: '#ff9800',
+        vwap: '#ab47bc',
+        h1e20: '#00e5ff',
+        lineEntry: '#2962ff',
+        lineSl: '#ef5350',
+        lineTp1: '#26a69a',
+        lineTp2: '#00e676',
+        lineBe: '#00e5ff'
+      }
+    };
+
+    // Store independent chart instances per symbol
+    const symbolCharts = {};
+
+    // Initialize Chart Instance for a specific symbol
+    function initChartForSymbol(symbol) {
+      const container = document.getElementById(`chart-container-${symbol}`);
+      const th = THEMES[currentTheme];
+
+      const chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: th.bg },
+          textColor: th.text,
+          fontSize: 12,
+          fontFamily: "'Inter', sans-serif"
+        },
+        grid: {
+          vertLines: { color: th.grid },
+          horzLines: { color: th.grid }
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { width: 1, color: th.crosshair, style: 3, labelBackgroundColor: th.candleUp },
+          horzLine: { width: 1, color: th.crosshair, style: 3, labelBackgroundColor: th.candleUp }
+        },
+        rightPriceScale: {
+          borderColor: th.border,
+          scaleMargins: { top: 0.14, bottom: 0.14 },
+          autoScale: true
+        },
+        timeScale: {
+          borderColor: th.border,
+          timeVisible: true,
+          secondsVisible: false,
+          barSpacing: 9,
+          rightOffset: 8,
+          minBarSpacing: 3
+        }
+      });
+
+      // Japanese Candlestick Series in institutional monochrome
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: th.candleUp,
+        downColor: th.candleDown,
+        borderVisible: true,
+        borderUpColor: th.candleBorderUp,
+        borderDownColor: th.candleBorderDown,
+        wickUpColor: th.candleWickUp,
+        wickDownColor: th.candleWickDown
+      });
+
+      // 5M EMA9 (Blue)
+      const ema9Series = chart.addLineSeries({
+        color: th.ema9,
+        lineWidth: 2,
+        title: 'EMA 9'
+      });
+
+      // 5M EMA20 (Orange/Amber)
+      const ema20Series = chart.addLineSeries({
+        color: th.ema20,
+        lineWidth: 2,
+        title: 'EMA 20'
+      });
+
+      // Session VWAP (Purple)
+      const vwapSeries = chart.addLineSeries({
+        color: th.vwap,
+        lineWidth: 2,
+        title: 'VWAP'
+      });
+
+      // 1H EMA20 (Cyan/Teal Dashed)
+      const h1e20Series = chart.addLineSeries({
+        color: th.h1e20,
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        title: '1H EMA20'
+      });
+
+      symbolCharts[symbol] = {
+        container,
+        chart,
+        candleSeries,
+        ema9Series,
+        ema20Series,
+        vwapSeries,
+        h1e20Series,
+        priceLines: [],
+        loaded: false,
+        lastBars: []
+      };
+
+      // Auto resize listener
+      window.addEventListener('resize', () => {
+        if (container.style.display !== 'none') {
+          chart.resize(container.clientWidth, container.clientHeight);
+        }
+      });
+    }
+
+    // Apply Theme to all charts
+    function applyTheme(theme) {
+      currentTheme = theme;
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('dcc_theme', theme);
+      const th = THEMES[theme];
+
+      document.getElementById('theme-icon').innerText = theme === 'light' ? '🌙 Dark' : '☀️ Light';
+
+      SYMBOLS.forEach(sym => {
+        const sc = symbolCharts[sym];
+        if (!sc) return;
+
+        sc.chart.applyOptions({
+          layout: { background: { color: th.bg }, textColor: th.text },
+          grid: { vertLines: { color: th.grid }, horzLines: { color: th.grid } },
+          rightPriceScale: { borderColor: th.border },
+          timeScale: { borderColor: th.border },
+          crosshair: {
+            vertLine: { color: th.crosshair, labelBackgroundColor: th.candleUp },
+            horzLine: { color: th.crosshair, labelBackgroundColor: th.candleUp }
+          }
+        });
+
+        sc.candleSeries.applyOptions({
+          upColor: th.candleUp,
+          downColor: th.candleDown,
+          borderVisible: true,
+          borderUpColor: th.candleBorderUp,
+          borderDownColor: th.candleBorderDown,
+          wickUpColor: th.candleWickUp,
+          wickDownColor: th.candleWickDown
+        });
+
+        sc.ema9Series.applyOptions({ color: th.ema9 });
+        sc.ema20Series.applyOptions({ color: th.ema20 });
+        sc.vwapSeries.applyOptions({ color: th.vwap });
+        sc.h1e20Series.applyOptions({ color: th.h1e20 });
+      });
+    }
+
+    // Clear Trade Geometry Price Lines for a symbol
+    function clearPriceLines(symbol) {
+      const sc = symbolCharts[symbol];
+      if (!sc) return;
+      sc.priceLines.forEach(l => sc.candleSeries.removePriceLine(l));
+      sc.priceLines = [];
+    }
+
+    // Update Live Trade Geometry Lines
+    function updateTradeGeometry(symbol, pos, armed) {
+      clearPriceLines(symbol);
+      const sc = symbolCharts[symbol];
+      if (!sc) return;
+
+      const th = THEMES[currentTheme];
+      const badge = document.getElementById('trade-badge');
+      const cardEntry = document.getElementById('card-entry');
+      const cardSl = document.getElementById('card-sl');
+      const cardTp1 = document.getElementById('card-tp1');
+      const cardTp2 = document.getElementById('card-tp2');
+      const cardBe = document.getElementById('card-be');
+      const cardPnl = document.getElementById('card-pnl');
+
+      if (pos && pos.active) {
+        const isBuy = pos.direction === "BUY";
+        badge.className = `trade-status-badge ${isBuy ? 'badge-buy' : 'badge-sell'}`;
+        badge.innerText = `${pos.direction} ACTIVE (#${pos.ticket_b})`;
+
+        cardEntry.innerText = pos.entry_price.toFixed(2);
+        cardSl.innerText = pos.sl_price.toFixed(2);
+        cardTp1.innerText = pos.tp1_price.toFixed(2);
+        cardTp2.innerText = pos.tp2_price.toFixed(2);
+        cardBe.innerText = pos.runner_moved_to_be ? `${pos.be_sl.toFixed(2)} (PROTECTED)` : "NOT SHIFTED";
+        
+        const curPnl = pos.pnl_a + (pos.current_profit || 0);
+        cardPnl.className = `metric-val ${curPnl >= 0 ? 'green' : 'red'}`;
+        cardPnl.innerText = `${curPnl >= 0 ? '+' : ''}$${curPnl.toFixed(2)}`;
+
+        // Add Horizontal Lines on Chart
+        sc.priceLines.push(sc.candleSeries.createPriceLine({
+          price: pos.entry_price,
+          color: th.lineEntry,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `ENTRY (${pos.direction})`
+        }));
+
+        sc.priceLines.push(sc.candleSeries.createPriceLine({
+          price: pos.sl_price,
+          color: th.lineSl,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'STOP LOSS (-1.0R)'
+        }));
+
+        sc.priceLines.push(sc.candleSeries.createPriceLine({
+          price: pos.tp1_price,
+          color: th.lineTp1,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'TARGET 1 (+1.5R)'
+        }));
+
+        sc.priceLines.push(sc.candleSeries.createPriceLine({
+          price: pos.tp2_price,
+          color: th.lineTp2,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'TARGET 2 (+2.0R)'
+        }));
+
+        if (pos.runner_moved_to_be && pos.be_sl > 0) {
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: pos.be_sl,
+            color: th.lineBe,
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'BREAKEVEN STOP'
+          }));
+        }
+      } else if (armed && armed.is_armed) {
+        badge.className = "trade-status-badge badge-buy";
+        badge.innerText = `ARMED ${armed.direction}`;
+        cardEntry.innerText = "AT BAR CLOSE";
+        cardSl.innerText = `-${armed.sl_distance.toFixed(1)} pts`;
+        cardTp1.innerText = `+${armed.tp1_distance.toFixed(1)} pts (1.5R)`;
+        cardTp2.innerText = `+${armed.tp2_distance.toFixed(1)} pts (2.0R)`;
+        cardBe.innerText = "PENDING ENTRY";
+        cardPnl.innerText = "$0.00";
+        cardPnl.className = "metric-val";
+      } else {
+        badge.className = "trade-status-badge badge-idle";
+        badge.innerText = "NO POSITION";
+        cardEntry.innerText = "--";
+        cardSl.innerText = "--";
+        cardTp1.innerText = "--";
+        cardTp2.innerText = "--";
+        cardBe.innerText = "--";
+        cardPnl.innerText = "$0.00";
+        cardPnl.className = "metric-val";
+      }
+    }
+
+    // Fetch Candles & Indicators for a Symbol
+    async function loadCandlesForSymbol(symbol, forceFit = false) {
+      const sc = symbolCharts[symbol];
+      if (!sc) return;
+
+      try {
+        const res = await fetch(`/api/candles?symbol=${symbol}&tf=${currentTimeframe}`);
+        const data = await res.json();
+        if (!data || !data.bars || data.bars.length === 0) return;
+
+        const ohlc = [];
+        const e9 = [];
+        const e20 = [];
+        const vwap = [];
+        const h1 = [];
+
+        data.bars.forEach(b => {
+          ohlc.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
+          e9.push({ time: b.time, value: b.ema9 });
+          e20.push({ time: b.time, value: b.ema20 });
+          vwap.push({ time: b.time, value: b.vwap });
+          h1.push({ time: b.time, value: b.h1_e20 });
+        });
+
+        sc.candleSeries.setData(ohlc);
+        sc.ema9Series.setData(e9);
+        sc.ema20Series.setData(e20);
+        sc.vwapSeries.setData(vwap);
+        sc.h1e20Series.setData(h1);
+        sc.lastBars = data.bars;
+
+        // Auto-fit if first time loaded or explicitly requested
+        if (!sc.loaded || forceFit) {
+          sc.chart.timeScale().fitContent();
+          sc.chart.priceScale('right').applyOptions({ autoScale: true });
+          sc.loaded = true;
+        }
+
+        // Update Legend if this is the active symbol
+        if (symbol === currentSymbol) {
+          updateWatermarkAndLegend(data.bars);
+        }
+      } catch (err) {
+        console.error(`Error loading candles for ${symbol}:`, err);
+      }
+    }
+
+    // Update Watermark & Indicator Legend
+    function updateWatermarkAndLegend(bars = null) {
+      const sc = symbolCharts[currentSymbol];
+      if (!sc) return;
+      const bList = bars || sc.lastBars;
+      if (!bList || bList.length === 0) return;
+
+      const last = bList[bList.length - 1];
+      document.getElementById('watermark-title').innerText = `${currentSymbol} • ${currentTimeframe}`;
+      document.getElementById('leg-ema9').innerText = last.ema9.toFixed(2);
+      document.getElementById('leg-ema20').innerText = last.ema20.toFixed(2);
+      document.getElementById('leg-vwap').innerText = last.vwap.toFixed(2);
+      document.getElementById('leg-h1e20').innerText = last.h1_e20.toFixed(2);
+
+      const lastTime = new Date(last.time * 1000).toUTCString().split(" ")[4];
+      document.getElementById('status-last-candle').innerText = `Last Bar: ${lastTime} UTC`;
+    }
+
+    // Switch Symbol with Full Price Scale and Scroll Persistence
+    function switchSymbol(newSymbol) {
+      if (newSymbol === currentSymbol) return;
+
+      // 1. Deactivate outgoing chart container
+      const oldSc = symbolCharts[currentSymbol];
+      if (oldSc) {
+        oldSc.container.classList.remove('active');
+      }
+
+      currentSymbol = newSymbol;
+
+      // 2. Activate incoming chart container
+      const newSc = symbolCharts[currentSymbol];
+      if (newSc) {
+        newSc.container.classList.add('active');
+        newSc.chart.resize(newSc.container.clientWidth, newSc.container.clientHeight);
+        
+        // If not loaded yet, fetch and fit
+        if (!newSc.loaded) {
+          loadCandlesForSymbol(currentSymbol, true);
+        } else {
+          // Re-center view smoothly without any scrolling needed
+          newSc.chart.timeScale().fitContent();
+          newSc.chart.priceScale('right').applyOptions({ autoScale: true });
+        }
+      }
+
+      // 3. Update pill buttons UI
+      document.querySelectorAll('#symbol-selector .segment-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-sym') === currentSymbol);
+      });
+
+      updateWatermarkAndLegend();
+      pollState();
+    }
+
+    // Switch Timeframe (1M, 5M, 15M, 30M, 1H)
+    function switchTimeframe(newTf) {
+      currentTimeframe = newTf;
+
+      document.querySelectorAll('#tf-selector .segment-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-tf') === currentTimeframe);
+      });
+
+      // Reload candles and auto-fit view for new timeframe
+      loadCandlesForSymbol(currentSymbol, true);
+    }
+
+    // Fit Content and Recenter Active Chart
+    function fitActiveChart() {
+      const sc = symbolCharts[currentSymbol];
+      if (!sc) return;
+      sc.chart.timeScale().fitContent();
+      sc.chart.priceScale('right').applyOptions({ autoScale: true });
+    }
+
+    // Fetch Account Telemetry & Active Trade State
+    async function pollState() {
+      try {
+        const res = await fetch('/api/state');
+        const state = await res.json();
+        if (!state || !state.account) return;
+
+        const acc = state.account;
+        document.getElementById('kpi-equity').innerText = `$${acc.equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+        document.getElementById('kpi-balance').innerText = `$${acc.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+        
+        const pnlEl = document.getElementById('kpi-today-pnl');
+        pnlEl.className = `val ${acc.today_pnl >= 0 ? 'green' : 'red'}`;
+        pnlEl.innerText = `${acc.today_pnl >= 0 ? '+' : ''}$${acc.today_pnl.toFixed(2)} (${acc.today_pnl_pct >= 0 ? '+' : ''}${acc.today_pnl_pct.toFixed(2)}%)`;
+
+        document.getElementById('kpi-daily-dd').innerText = `-${acc.daily_dd_pct.toFixed(2)}%`;
+        document.getElementById('kpi-cushion').innerText = `$${acc.remaining_cushion.toFixed(2)}`;
+        document.getElementById('kpi-session').innerText = acc.session || "ACTIVE";
+
+        document.getElementById('status-account').innerText = `Account: ${acc.id} (${acc.server})`;
+
+        // Update active positions & trade geometry for current symbol
+        const pos = state.positions ? state.positions[currentSymbol] : null;
+        const armed = state.armed_setups ? state.armed_setups[currentSymbol] : null;
+        updateTradeGeometry(currentSymbol, pos, armed);
+
+      } catch (err) {
+        console.error("Error polling state:", err);
+      }
+    }
+
+    // Real-time Clock
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('status-clock').innerText = `${now.toUTCString().split(" ")[4]} UTC`;
+    }
+
+    // Setup Event Listeners
+    function setupControls() {
+      // Symbol Switcher
+      document.querySelectorAll('#symbol-selector .segment-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          switchSymbol(btn.getAttribute('data-sym'));
+        });
+      });
+
+      // Timeframe Switcher
+      document.querySelectorAll('#tf-selector .segment-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          switchTimeframe(btn.getAttribute('data-tf'));
+        });
+      });
+
+      // Auto Fit / Recenter Button
+      document.getElementById('btn-fit-content').addEventListener('click', () => {
+        fitActiveChart();
+      });
+
+      // Theme Toggle Button
+      document.getElementById('btn-theme-toggle').addEventListener('click', () => {
+        const nextTheme = currentTheme === 'light' ? 'dark' : 'light';
+        applyTheme(nextTheme);
+      });
+    }
+
+    // Bootstrap Dashboard
+    window.addEventListener('DOMContentLoaded', () => {
+      // 1. Initialize independent chart instances for both symbols
+      SYMBOLS.forEach(sym => initChartForSymbol(sym));
+
+      // 2. Apply theme (Default: Light Monochrome matching TradingView settings)
+      applyTheme(currentTheme);
+
+      // 3. Setup user interaction controls
+      setupControls();
+
+      // 4. Initial data load for active symbol (and pre-fetch NAS100 in background)
+      loadCandlesForSymbol('XAUUSD', true);
+      setTimeout(() => loadCandlesForSymbol('NAS100', true), 300);
+
+      // 5. Initial account telemetry poll
+      pollState();
+
+      // 6. Tab Visibility Throttling (Drops background CPU and network to ~0% when tab is hidden)
+      let isTabActive = !document.hidden;
+      document.addEventListener('visibilitychange', () => {
+        isTabActive = !document.hidden;
+        if (isTabActive) {
+          // Instantly refresh active charts & telemetry as soon as user returns to the tab
+          loadCandlesForSymbol(currentSymbol, false);
+          pollState();
+        }
+      });
+
+      // 7. Set background poll intervals (active only when tab is visible)
+      setInterval(updateClock, 1000);
+      setInterval(() => {
+        if (!isTabActive) return;
+        pollState();
+      }, 2000);                          // Poll live state every 2.0s
+
+      setInterval(() => {
+        if (!isTabActive) return;
+        loadCandlesForSymbol(currentSymbol, false); // Refresh active symbol every 3.5s
+      }, 3500);
+    });
+  </script>
+</body>
+</html>
