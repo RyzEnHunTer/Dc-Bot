@@ -1734,6 +1734,16 @@ class InstitutionalDCCBot:
             # Build positions map
             positions_data = {}
             for sym, pos in self.active_positions.items():
+                cur_profit = 0.0
+                try:
+                    for t in [pos.ticket_a, pos.ticket_b]:
+                        if t and t > 0:
+                            p_info = mt5.positions_get(ticket=t)
+                            if p_info and len(p_info) > 0:
+                                cur_profit += float(p_info[0].profit)
+                except Exception:
+                    pass
+
                 positions_data[sym] = {
                     "active": True,
                     "symbol": sym,
@@ -1750,16 +1760,26 @@ class InstitutionalDCCBot:
                     "ticket_b": pos.ticket_b,
                     "lots_a": pos.lots_a,
                     "lots_b": pos.lots_b,
-                    "pnl_a": pos.pnl_a
+                    "pnl_a": pos.pnl_a,
+                    "current_profit": round(cur_profit, 2)
                 }
 
             # Build armed setups map
             armed_data = {}
             for sym, armed in self.armed_states.items():
                 if armed.is_armed:
+                    est_entry = 0.0
+                    try:
+                        tick = mt5.symbol_info_tick(sym)
+                        if tick:
+                            est_entry = float(tick.ask if armed.direction == 1 else tick.bid)
+                    except Exception:
+                        pass
+
                     armed_data[sym] = {
                         "is_armed": True,
                         "direction": "BUY" if armed.direction == 1 else "SELL",
+                        "projected_entry": round(est_entry, 2),
                         "sl_distance": armed.sl_distance,
                         "tp1_distance": armed.tp1_distance,
                         "tp2_distance": armed.tp2_distance,

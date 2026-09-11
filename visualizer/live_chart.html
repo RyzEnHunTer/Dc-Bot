@@ -387,7 +387,13 @@
 
     .badge-buy { background: rgba(0, 137, 123, 0.15); color: var(--color-green); border: 1px solid rgba(0, 137, 123, 0.3); }
     .badge-sell { background: rgba(211, 47, 47, 0.15); color: var(--color-red); border: 1px solid rgba(211, 47, 47, 0.3); }
+    .badge-armed { background: rgba(255, 179, 0, 0.2); color: #ffb300; border: 1px solid rgba(255, 179, 0, 0.5); animation: armed-pulse 1.6s infinite alternate; }
     .badge-idle { background: rgba(120, 123, 134, 0.15); color: var(--text-muted); }
+
+    @keyframes armed-pulse {
+      0% { box-shadow: 0 0 4px rgba(255, 179, 0, 0.3); opacity: 0.85; }
+      100% { box-shadow: 0 0 12px rgba(255, 179, 0, 0.7); opacity: 1; }
+    }
 
     .trade-metric-row {
       display: flex;
@@ -930,7 +936,7 @@
       if (pos && pos.active) {
         const isBuy = pos.direction === "BUY";
         badge.className = `trade-status-badge ${isBuy ? 'badge-buy' : 'badge-sell'}`;
-        badge.innerText = `${pos.direction} ACTIVE (#${pos.ticket_b})`;
+        badge.innerText = `${pos.direction} ACTIVE (#${pos.ticket_b || pos.ticket_a})`;
 
         cardEntry.innerText = pos.entry_price.toFixed(2);
         cardSl.innerText = pos.sl_price.toFixed(2);
@@ -938,18 +944,30 @@
         cardTp2.innerText = pos.tp2_price.toFixed(2);
         cardBe.innerText = pos.runner_moved_to_be ? `${pos.be_sl.toFixed(2)} (PROTECTED)` : "NOT SHIFTED";
         
-        const curPnl = pos.pnl_a + (pos.current_profit || 0);
+        const curPnl = (pos.pnl_a || 0) + (pos.current_profit || 0);
         cardPnl.className = `metric-val ${curPnl >= 0 ? 'green' : 'red'}`;
         cardPnl.innerText = `${curPnl >= 0 ? '+' : ''}$${curPnl.toFixed(2)}`;
 
-        // Add Horizontal Lines on Chart
+        // Place Entry Marker on Candle Series
+        if (sc.lastBars && sc.lastBars.length > 0) {
+          const mTime = pos.entry_time || sc.lastBars[sc.lastBars.length - 1].time;
+          sc.candleSeries.setMarkers([{
+            time: mTime,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color: isBuy ? '#00897b' : '#d32f2f',
+            shape: isBuy ? 'arrowUp' : 'arrowDown',
+            text: `${pos.direction} ENTRY (${pos.entry_price.toFixed(2)})`
+          }]);
+        }
+
+        // Add Active Trade Horizontal Lines on Chart
         sc.priceLines.push(sc.candleSeries.createPriceLine({
           price: pos.entry_price,
           color: th.lineEntry,
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
-          title: `ENTRY (${pos.direction})`
+          title: `ENTRY (${pos.direction}: ${pos.entry_price.toFixed(2)})`
         }));
 
         sc.priceLines.push(sc.candleSeries.createPriceLine({
@@ -958,7 +976,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'STOP LOSS (-1.0R)'
+          title: `STOP LOSS (-1.0R: ${pos.sl_price.toFixed(2)})`
         }));
 
         sc.priceLines.push(sc.candleSeries.createPriceLine({
@@ -967,7 +985,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'TARGET 1 (+1.5R)'
+          title: `TARGET 1 (+1.5R: ${pos.tp1_price.toFixed(2)})`
         }));
 
         sc.priceLines.push(sc.candleSeries.createPriceLine({
@@ -976,7 +994,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: 'TARGET 2 (+2.0R)'
+          title: `TARGET 2 (+2.0R: ${pos.tp2_price.toFixed(2)})`
         }));
 
         if (pos.runner_moved_to_be && pos.be_sl > 0) {
@@ -986,20 +1004,90 @@
             lineWidth: 2,
             lineStyle: LightweightCharts.LineStyle.Solid,
             axisLabelVisible: true,
-            title: 'BREAKEVEN STOP'
+            title: `BREAKEVEN STOP (${pos.be_sl.toFixed(2)})`
           }));
         }
       } else if (armed && armed.is_armed) {
-        badge.className = "trade-status-badge badge-buy";
+        const isBuy = armed.direction === "BUY";
+        badge.className = "trade-status-badge badge-armed";
         badge.innerText = `ARMED ${armed.direction}`;
-        cardEntry.innerText = "AT BAR CLOSE";
-        cardSl.innerText = `-${armed.sl_distance.toFixed(1)} pts`;
-        cardTp1.innerText = `+${armed.tp1_distance.toFixed(1)} pts (1.5R)`;
-        cardTp2.innerText = `+${armed.tp2_distance.toFixed(1)} pts (2.0R)`;
-        cardBe.innerText = "PENDING ENTRY";
-        cardPnl.innerText = "$0.00";
-        cardPnl.className = "metric-val";
+
+        // Resolve current price from latest bar
+        const lastBar = (sc.lastBars && sc.lastBars.length > 0) ? sc.lastBars[sc.lastBars.length - 1] : null;
+        const curPrice = (armed.projected_entry && armed.projected_entry > 0) ? armed.projected_entry : (lastBar ? lastBar.close : 0);
+
+        if (curPrice > 0) {
+          const estEntry = curPrice;
+          const estSl = isBuy ? (estEntry - armed.sl_distance) : (estEntry + armed.sl_distance);
+          const estTp1 = isBuy ? (estEntry + armed.tp1_distance) : (estEntry - armed.tp1_distance);
+          const estTp2 = isBuy ? (estEntry + armed.tp2_distance) : (estEntry - armed.tp2_distance);
+
+          cardEntry.innerText = `~${estEntry.toFixed(2)} (AT BAR CLOSE)`;
+          cardSl.innerText = `${estSl.toFixed(2)} (-${armed.sl_distance.toFixed(1)} pts)`;
+          cardTp1.innerText = `${estTp1.toFixed(2)} (+${armed.tp1_distance.toFixed(1)} pts)`;
+          cardTp2.innerText = `${estTp2.toFixed(2)} (+${armed.tp2_distance.toFixed(1)} pts)`;
+          cardBe.innerText = "PENDING TRIGGER";
+          cardPnl.innerText = "$0.00";
+          cardPnl.className = "metric-val";
+
+          // Add Trade Prediction Setup Marker on Latest Candle
+          if (lastBar) {
+            sc.candleSeries.setMarkers([{
+              time: lastBar.time,
+              position: isBuy ? 'belowBar' : 'aboveBar',
+              color: '#ffb300',
+              shape: isBuy ? 'arrowUp' : 'arrowDown',
+              text: `ARMED ${armed.direction} SETUP`
+            }]);
+          }
+
+          // Add Dotted Trade Prediction Geometry Lines on Chart
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: estEntry,
+            color: '#ffb300',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `PREDICTED ENTRY (${armed.direction}: ~${estEntry.toFixed(2)})`
+          }));
+
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: estSl,
+            color: '#ef5350',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `PREDICTED SL (-1.0R: ${estSl.toFixed(2)})`
+          }));
+
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: estTp1,
+            color: '#26a69a',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `PREDICTED TP1 (+1.5R: ${estTp1.toFixed(2)})`
+          }));
+
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: estTp2,
+            color: '#00e676',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `PREDICTED TP2 (+2.0R: ${estTp2.toFixed(2)})`
+          }));
+        } else {
+          cardEntry.innerText = "AT BAR CLOSE";
+          cardSl.innerText = `-${armed.sl_distance.toFixed(1)} pts`;
+          cardTp1.innerText = `+${armed.tp1_distance.toFixed(1)} pts (1.5R)`;
+          cardTp2.innerText = `+${armed.tp2_distance.toFixed(1)} pts (2.0R)`;
+          cardBe.innerText = "PENDING ENTRY";
+          cardPnl.innerText = "$0.00";
+          cardPnl.className = "metric-val";
+        }
       } else {
+        sc.candleSeries.setMarkers([]);
         badge.className = "trade-status-badge badge-idle";
         badge.innerText = "NO POSITION";
         cardEntry.innerText = "--";

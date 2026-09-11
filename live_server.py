@@ -262,6 +262,45 @@ def fetch_account_and_history() -> Dict[str, Any]:
                 })
                 state["account"] = acc_data
 
+    # Reconcile active positions directly from MT5 so chart geometry is always complete
+    if MT5_AVAILABLE and mt5.initialize():
+        try:
+            mt5_positions = mt5.positions_get()
+            active_pos_map = state.get("positions", {})
+            if mt5_positions:
+                for p in mt5_positions:
+                    sym_clean = "XAUUSD" if ("XAU" in p.symbol or "GOLD" in p.symbol) else ("NAS100" if ("NAS" in p.symbol or "USTEC" in p.symbol) else p.symbol)
+                    if sym_clean not in active_pos_map or not active_pos_map[sym_clean].get("active"):
+                        is_buy = (p.type == 0)
+                        sl = float(p.sl)
+                        tp = float(p.tp)
+                        entry = float(p.price_open)
+                        risk = abs(entry - sl) if sl > 0 else (entry * 0.005)
+                        active_pos_map[sym_clean] = {
+                            "active": True,
+                            "symbol": sym_clean,
+                            "direction": "BUY" if is_buy else "SELL",
+                            "entry_price": round(entry, 2),
+                            "entry_time": p.time,
+                            "entry_spread": 0.0,
+                            "sl_price": round(sl, 2) if sl > 0 else (round(entry - risk, 2) if is_buy else round(entry + risk, 2)),
+                            "tp1_price": round(tp, 2) if tp > 0 else (round(entry + 1.5 * risk, 2) if is_buy else round(entry - 1.5 * risk, 2)),
+                            "tp2_price": round(entry + 2.0 * risk, 2) if is_buy else round(entry - 2.0 * risk, 2),
+                            "be_sl": 0.0,
+                            "runner_moved_to_be": False,
+                            "ticket_a": p.ticket,
+                            "ticket_b": p.ticket,
+                            "lots_a": round(float(p.volume) / 2.0, 2),
+                            "lots_b": round(float(p.volume) / 2.0, 2),
+                            "pnl_a": 0.0,
+                            "current_profit": round(float(p.profit), 2)
+                        }
+                    else:
+                        active_pos_map[sym_clean]["current_profit"] = round(float(p.profit), 2)
+                state["positions"] = active_pos_map
+        except Exception:
+            pass
+
     return state
 
 
