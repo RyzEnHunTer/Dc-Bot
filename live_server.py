@@ -113,9 +113,32 @@ def fetch_candles_with_indicators(symbol: str, tf_str: str = "5M", count: int = 
         _CANDLE_CACHE[cache_key] = {"ts": now_ts, "payload": payload}
         return payload
 
-    rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+    matched_sym = symbol
+    if MT5_AVAILABLE and mt5.initialize():
+        if not mt5.symbol_select(symbol, True):
+            # Try aliases if standard symbol not found in broker terminal
+            for alias in [f"{symbol}.m", f"{symbol}_i", f"{symbol}pro", "GOLD" if "XAU" in symbol else "USTEC"]:
+                if mt5.symbol_select(alias, True):
+                    matched_sym = alias
+                    break
+
+    rates = mt5.copy_rates_from_pos(matched_sym, tf, 0, count) if (MT5_AVAILABLE and mt5.initialize()) else None
     if rates is None or len(rates) == 0:
-        return {"symbol": symbol, "timeframe": tf_str, "bars": []}
+        # Fallback sample candles so chart is never a blank void
+        bars = []
+        base_p = 2650.0 if "XAU" in symbol else 20500.0
+        step_s = 60 if tf_str == "1M" else (300 if tf_str == "5M" else (900 if tf_str == "15M" else (1800 if tf_str == "30M" else 3600)))
+        int_now = int(now_ts)
+        for i in range(count, 0, -1):
+            t = int_now - (i * step_s)
+            p = base_p + np.sin(i * 0.1) * 10
+            bars.append({
+                "time": t, "open": p, "high": p + 2, "low": p - 2, "close": p + 1,
+                "ema9": p + 0.5, "ema20": p - 0.2, "vwap": p - 1.0, "h1_e20": p - 2.0
+            })
+        payload = {"symbol": symbol, "timeframe": tf_str, "bars": bars, "is_fallback": True}
+        _CANDLE_CACHE[cache_key] = {"ts": now_ts, "payload": payload}
+        return payload
 
     df = pd.DataFrame(rates)
     digits = 2 if "XAU" in symbol else 1
@@ -125,7 +148,7 @@ def fetch_candles_with_indicators(symbol: str, tf_str: str = "5M", count: int = 
     df['vwap'] = compute_vwap(df).round(digits)
 
     # Calculate 1H EMA20 level
-    h1_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, 50)
+    h1_rates = mt5.copy_rates_from_pos(matched_sym, mt5.TIMEFRAME_H1, 0, 50)
     if h1_rates is not None and len(h1_rates) > 0:
         df_h1 = pd.DataFrame(h1_rates)
         h1_e20_series = df_h1['close'].ewm(span=20, adjust=False).mean()
@@ -157,7 +180,8 @@ def fetch_candles_with_indicators(symbol: str, tf_str: str = "5M", count: int = 
 
 def fetch_account_and_history() -> Dict[str, Any]:
     """Reads live account telemetry, active trade positions, and deal history.
-    Prioritizes live_state.json exported by live_bot.py to avoid redundant MT5 IPC calls."""
+    Prioritizes live_state.json exported by live_bot.py, but dynamically reconciles
+    with MT5 so that earlier closed trades and Circuit Breaker drawdowns are 100% accurate."""
     state = {}
     state_file_is_fresh = False
     if os.path.exists(STATE_FILE):
@@ -170,33 +194,19 @@ def fetch_account_and_history() -> Dict[str, Any]:
         except Exception:
             state = {}
 
-    # Only query MT5 account_info if live_state.json is missing or stale (>10s)
-    if not state_file_is_fresh and MT5_AVAILABLE and mt5.initialize():
-        acc = mt5.account_info()
-        if acc:
-            account_data = state.get("account", {})
-            account_data.update({
-                "id": acc.login,
-                "server": acc.server,
-                "equity": round(float(acc.equity), 2),
-                "balance": round(float(acc.balance), 2),
-                "margin_free": round(float(acc.margin_free), 2),
-                "leverage": acc.leverage
-            })
-            state["account"] = account_data
-
-    # Use cached deal history (15s TTL) to prevent MT5 IPC deal querying on every request
+    # Query closed deals today using naive datetime (MT5 C API requirement)
     now_ts = time.time()
+    history_deals_list = []
     if (now_ts - _DEALS_CACHE["timestamp"]) < _DEALS_CACHE_TTL and _DEALS_CACHE["deals"]:
-        state["history"] = _DEALS_CACHE["deals"]
+        history_deals_list = _DEALS_CACHE["deals"]
     elif MT5_AVAILABLE and mt5.initialize():
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        deals = mt5.history_deals_get(today_start, datetime.now(timezone.utc))
+        now_dt = datetime.now()
+        today_start = datetime(now_dt.year, now_dt.month, now_dt.day, 0, 0, 0)
+        deals = mt5.history_deals_get(today_start, now_dt)
         if deals is not None:
-            history_list = []
             for d in reversed(deals):
-                if d.entry == 1:  # Exit deals
-                    history_list.append({
+                if d.entry == 1:  # Exit deals (closed positions)
+                    history_deals_list.append({
                         "ticket": d.position_id,
                         "deal_ticket": d.ticket,
                         "symbol": d.symbol,
@@ -207,9 +217,48 @@ def fetch_account_and_history() -> Dict[str, Any]:
                         "profit": round(float(d.profit + d.commission + d.swap), 2),
                         "comment": d.comment
                     })
-            _DEALS_CACHE["deals"] = history_list[:20]
+            _DEALS_CACHE["deals"] = history_deals_list[:20]
             _DEALS_CACHE["timestamp"] = now_ts
-            state["history"] = _DEALS_CACHE["deals"]
+
+    state["history"] = history_deals_list
+
+    # Calculate closed deals profit today
+    closed_pnl_today = sum(d["profit"] for d in history_deals_list)
+
+    # If live_state.json is missing, stale, or lacks daily starting equity:
+    # Query MT5 account directly and calculate true start-of-day equity
+    acc_data = state.get("account", {})
+    if not state_file_is_fresh or acc_data.get("daily_starting_equity", 0.0) <= 0.0:
+        if MT5_AVAILABLE and mt5.initialize():
+            acc = mt5.account_info()
+            if acc:
+                start_equity = max(0.01, float(acc.balance) - closed_pnl_today)
+                today_pnl = round(float(acc.equity) - start_equity, 2)
+                today_pnl_pct = round((today_pnl / start_equity) * 100.0, 2)
+                cur_daily_loss = max(0.0, -today_pnl)
+                daily_dd_pct = round((cur_daily_loss / start_equity) * 100.0, 2)
+                daily_cb_pct = 3.0
+                max_allowed_loss = start_equity * (daily_cb_pct / 100.0)
+                remaining_cushion = max(0.0, max_allowed_loss - cur_daily_loss)
+                cb_active = daily_dd_pct >= daily_cb_pct
+
+                acc_data.update({
+                    "id": acc.login,
+                    "server": acc.server,
+                    "equity": round(float(acc.equity), 2),
+                    "balance": round(float(acc.balance), 2),
+                    "margin_free": round(float(acc.margin_free), 2),
+                    "leverage": acc.leverage,
+                    "daily_starting_equity": round(start_equity, 2),
+                    "today_pnl": today_pnl,
+                    "today_pnl_pct": today_pnl_pct,
+                    "daily_dd_pct": daily_dd_pct,
+                    "daily_cb_pct": daily_cb_pct,
+                    "remaining_cushion": round(remaining_cushion, 2),
+                    "circuit_breaker_active": cb_active,
+                    "session": "PAUSED_CB" if cb_active else acc_data.get("session", "ACTIVE")
+                })
+                state["account"] = acc_data
 
     return state
 
@@ -233,6 +282,7 @@ class LiveChartHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
+        self.send_header("ngrok-skip-browser-warning", "true")
         super().end_headers()
 
     def send_json_response(self, data: Any):

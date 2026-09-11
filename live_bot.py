@@ -602,8 +602,34 @@ class InstitutionalDCCBot:
             notif_cfg = self.config_mgr.get_notification_config(str(account.login))
             self.notifier.update_config(notif_cfg)
 
-        self.daily_starting_equity = account.equity
+        # Determine True Day Starting Equity (recovering any deals closed earlier today before bot start)
+        now_dt = datetime.now()
+        today_start_naive = datetime(now_dt.year, now_dt.month, now_dt.day, 0, 0, 0)
+        today_deals = mt5.history_deals_get(today_start_naive, now_dt)
+        closed_pnl_today = 0.0
+        if today_deals:
+            for d in today_deals:
+                if d.entry == 1:  # Exit deals (closed positions)
+                    closed_pnl_today += float(d.profit + d.commission + d.swap)
+
+        # Day Starting Equity = Current Balance - Closed Profit Today
+        self.daily_starting_equity = max(0.01, float(account.balance) - closed_pnl_today)
         self.current_trading_day = datetime.now(timezone.utc).date()
+
+        # Check if Circuit Breaker was already breached earlier today before startup
+        cur_day_pnl = float(account.equity) - self.daily_starting_equity
+        cur_daily_loss = max(0.0, -cur_day_pnl)
+        init_daily_dd_pct = (cur_daily_loss / self.daily_starting_equity) * 100.0 if self.daily_starting_equity > 0 else 0.0
+        if init_daily_dd_pct >= self.daily_cb_pct:
+            self.circuit_breaker_active = True
+            print("\n" + "!" * 80)
+            print(f"[!! RECOVERED PRIOR LOSS: DAILY CIRCUIT BREAKER ACTIVE (-{init_daily_dd_pct:.2f}%) !!]")
+            print(f"Closed deals PnL today:  -${cur_daily_loss:,.2f} | Starting Equity: ${self.daily_starting_equity:,.2f}")
+            print(f"Circuit Breaker Limit:   -{self.daily_cb_pct:.1f}% | Cushion: $0.00")
+            print("ACTION: Trading remains HALTED for remainder of day to protect account.")
+            print("!" * 80 + "\n")
+        elif closed_pnl_today != 0.0:
+            print(f"[AUDIT] Recovered prior closed trades today: PnL {'+' if closed_pnl_today >= 0 else ''}${closed_pnl_today:,.2f} | Start Equity: ${self.daily_starting_equity:,.2f}")
 
         if self.high_water_mark <= 0.0:
             self.high_water_mark = account.equity
@@ -686,6 +712,9 @@ class InstitutionalDCCBot:
 
         # Broadcast initial session / trap hour pause status if starting inside a paused window
         self.check_session_and_trap_alerts(datetime.now(timezone.utc), is_startup=True)
+
+        # Export live state immediately on startup so visualizer reflects true equity and daily loss
+        self.write_live_state()
 
         return True
 
@@ -1751,7 +1780,7 @@ class InstitutionalDCCBot:
                     "daily_dd_pct": round(daily_dd_pct, 2),
                     "daily_cb_pct": self.daily_cb_pct,
                     "remaining_cushion": round(remaining_cushion, 2),
-                    "session": self.get_session_state(now_utc.hour),
+                    "session": "PAUSED_CB" if self.circuit_breaker_active else self.get_session_state(now_utc.hour),
                     "bot_heartbeat": now_utc.isoformat(),
                     "circuit_breaker_active": self.circuit_breaker_active
                 },

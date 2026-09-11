@@ -52,13 +52,32 @@ def kill_existing_services():
 
 
 def find_ngrok() -> str:
-    """Locates ngrok executable from local directory or system PATH."""
+    """Locates ngrok executable or automatically downloads it on-the-fly for fresh VPS instances."""
     if os.path.exists(NGROK_EXE):
         return NGROK_EXE
     found = shutil.which("ngrok")
     if found:
         return found
-    return ""
+
+    # On a fresh VPS, automatically download and extract ngrok.exe on the fly
+    print("[*] ngrok not found locally or in PATH. Automatically setting up ngrok for you...")
+    zip_path = os.path.join(BASE_DIR, "ngrok_auto.zip")
+    try:
+        req = urllib.request.Request(
+            NGROK_ZIP_URL,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        with urllib.request.urlopen(req) as response, open(zip_path, "wb") as out_file:
+            shutil.copyfileobj(response, out_file)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extract("ngrok.exe", BASE_DIR)
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        print(f"[OK] ngrok auto-downloaded successfully: {NGROK_EXE}")
+        return NGROK_EXE
+    except Exception as e:
+        print(f"[!] Warning: Auto-download of ngrok failed: {e}")
+        return ""
 
 
 def configure_authtoken(ngrok_bin: str):

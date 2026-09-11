@@ -42,7 +42,7 @@ def print_step(num: int, total: int, title: str):
 
 def install_python_packages():
     print_step(1, 4, "Verifying and Installing Python Dependencies")
-    print("[*] Checking packages: " + ", ".join(REQUIRED_PACKAGES))
+    print("[*] Installing packages in terminal: " + ", ".join(REQUIRED_PACKAGES))
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install"] + REQUIRED_PACKAGES
@@ -53,60 +53,59 @@ def install_python_packages():
 
 
 def install_and_configure_ngrok():
-    print_step(2, 4, "Installing and Updating ngrok Agent")
+    print_step(2, 4, "Installing and Configuring ngrok Agent")
     ngrok_bin = None
 
-    # Option A: Check if ngrok is in system PATH
-    found = shutil.which("ngrok")
-    if found:
-        print(f"[*] Found ngrok in system PATH: {found}")
-        ngrok_bin = found
-
-    # Option B: Check if local ngrok.exe exists
-    if not ngrok_bin and os.path.exists(NGROK_EXE):
+    # Option A: Check if local ngrok.exe exists
+    if os.path.exists(NGROK_EXE):
         print(f"[*] Found local ngrok executable: {NGROK_EXE}")
         ngrok_bin = NGROK_EXE
 
-    # Option C: Try winget if not yet installed
-    if not ngrok_bin and shutil.which("winget"):
-        print("[*] Attempting installation via winget...")
-        try:
-            res = subprocess.run(
-                ["winget", "install", "Ngrok.Ngrok", "--accept-source-agreements", "--accept-package-agreements"],
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            found = shutil.which("ngrok")
-            if found:
-                ngrok_bin = found
-                print(f"[OK] ngrok installed via winget: {found}")
-        except Exception:
-            pass
-
-    # Option D: Direct download fallback
+    # Option B: Check if ngrok is in system PATH
     if not ngrok_bin:
-        print("[*] Downloading official ngrok package...")
+        found = shutil.which("ngrok")
+        if found:
+            print(f"[*] Found ngrok in system PATH: {found}")
+            ngrok_bin = found
+
+    # Option C: Direct official package download (Foolproof on Windows VPS & Windows Server)
+    if not ngrok_bin:
+        print("[*] Downloading official ngrok package (Windows AMD64)...")
         zip_path = os.path.join(BASE_DIR, "ngrok_setup.zip")
         try:
-            urllib.request.urlretrieve(NGROK_ZIP_URL, zip_path)
+            req = urllib.request.Request(
+                NGROK_ZIP_URL,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req) as response, open(zip_path, "wb") as out_file:
+                shutil.copyfileobj(response, out_file)
+            print(f"[OK] Downloaded package ({os.path.getsize(zip_path):,} bytes). Extracting...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extract("ngrok.exe", BASE_DIR)
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             ngrok_bin = NGROK_EXE
-            print(f"[OK] ngrok extracted to {NGROK_EXE}")
+            print(f"[OK] ngrok successfully extracted to {NGROK_EXE}")
         except Exception as e:
-            print(f"[ERROR] Failed to download ngrok: {e}")
-            return
+            print(f"[ERROR] Failed to download ngrok via direct URL: {e}")
+            if shutil.which("winget"):
+                print("[*] Fallback: Trying winget installation...")
+                try:
+                    subprocess.run(
+                        ["winget", "install", "Ngrok.Ngrok", "--accept-source-agreements", "--accept-package-agreements"],
+                        timeout=120
+                    )
+                    found = shutil.which("ngrok")
+                    if found:
+                        ngrok_bin = found
+                except Exception:
+                    pass
 
-    # Update ngrok to the latest supported release (3.39+)
-    print("[*] Checking ngrok version and updating to latest release...")
-    try:
-        subprocess.run([ngrok_bin, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-    except Exception:
-        pass
+    if not ngrok_bin or not os.path.exists(ngrok_bin):
+        print("[ERROR] Could not install ngrok automatically. Please place ngrok.exe in this directory.")
+        return
 
+    # Verify version
     try:
         ver_res = subprocess.run([ngrok_bin, "version"], capture_output=True, text=True, timeout=5)
         print(f"[OK] Active ngrok version: {ver_res.stdout.strip()}")
@@ -114,12 +113,11 @@ def install_and_configure_ngrok():
         print(f"[!] Warning reading version: {e}")
 
     # Configure permanent authtoken
-    print("[*] Registering your permanent authtoken...")
+    print(f"[*] Registering your permanent authtoken...")
     try:
         subprocess.run(
             [ngrok_bin, "config", "add-authtoken", AUTHTOKEN],
-            check=True,
-            capture_output=True
+            check=True
         )
         print("[OK] Permanent authtoken registered successfully!")
     except Exception as e:
@@ -127,7 +125,7 @@ def install_and_configure_ngrok():
 
 
 def test_mt5_connection():
-    print_step(3, 4, "Verifying MetaTrader 5 Connectivity")
+    print_step(3, 4, "Verifying MetaTrader 5 Connectivity & Market Watch")
     try:
         import MetaTrader5 as mt5
         if mt5.initialize():
@@ -141,6 +139,13 @@ def test_mt5_connection():
                 print(f"     * Equity:    ${acc_info.equity:,.2f} | Balance: ${acc_info.balance:,.2f}")
             else:
                 print("     * Note: No active account logged in yet. Please log into your MT5 account.")
+            
+            # Pre-select XAUUSD and NAS100 into Market Watch
+            for sym in ["XAUUSD", "NAS100"]:
+                if mt5.symbol_select(sym, True):
+                    print(f"[OK] Pre-selected {sym} in Market Watch.")
+                else:
+                    print(f"[!] Warning: Could not select {sym}. Please check broker symbol name.")
             mt5.shutdown()
         else:
             err = mt5.last_error()
