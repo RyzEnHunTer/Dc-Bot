@@ -200,9 +200,11 @@ def fetch_account_and_history() -> Dict[str, Any]:
     if (now_ts - _DEALS_CACHE["timestamp"]) < _DEALS_CACHE_TTL and _DEALS_CACHE["deals"]:
         history_deals_list = _DEALS_CACHE["deals"]
     elif MT5_AVAILABLE and mt5.initialize():
-        now_dt = datetime.now()
-        today_start = datetime(now_dt.year, now_dt.month, now_dt.day, 0, 0, 0)
-        deals = mt5.history_deals_get(today_start, now_dt)
+        now_utc = datetime.now(timezone.utc)
+        today_start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_ts = int(today_start_utc.timestamp())
+        end_ts = int(now_ts + 86400)
+        deals = mt5.history_deals_get(start_ts, end_ts)
         if deals is not None:
             for d in reversed(deals):
                 if d.entry == 1:  # Exit deals (closed positions)

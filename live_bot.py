@@ -602,10 +602,12 @@ class InstitutionalDCCBot:
             notif_cfg = self.config_mgr.get_notification_config(str(account.login))
             self.notifier.update_config(notif_cfg)
 
-        # Determine True Day Starting Equity (recovering any deals closed earlier today before bot start)
-        now_dt = datetime.now()
-        today_start_naive = datetime(now_dt.year, now_dt.month, now_dt.day, 0, 0, 0)
-        today_deals = mt5.history_deals_get(today_start_naive, now_dt)
+        # Determine True Day Starting Equity in UTC (recovering any deals closed earlier today before bot start)
+        now_utc = datetime.now(timezone.utc)
+        today_start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_ts = int(today_start_utc.timestamp())
+        end_ts = int(pytime.time() + 86400)
+        today_deals = mt5.history_deals_get(start_ts, end_ts)
         closed_pnl_today = 0.0
         if today_deals:
             for d in today_deals:
@@ -614,7 +616,7 @@ class InstitutionalDCCBot:
 
         # Day Starting Equity = Current Balance - Closed Profit Today
         self.daily_starting_equity = max(0.01, float(account.balance) - closed_pnl_today)
-        self.current_trading_day = datetime.now(timezone.utc).date()
+        self.current_trading_day = now_utc.date()
 
         # Check if Circuit Breaker was already breached earlier today before startup
         cur_day_pnl = float(account.equity) - self.daily_starting_equity
