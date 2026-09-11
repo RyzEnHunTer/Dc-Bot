@@ -38,10 +38,8 @@ logs/
 tests/*test_accounts_config.json
 tests/*test_bot_accounts_config.json
 
-ngrok.exe
-
+# Binaries
 cloudflared.exe
-
 .ngrok.exe.old
 
 # Dynamic Live State Files

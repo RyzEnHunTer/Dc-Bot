@@ -31,11 +31,40 @@ NGROK_EXE = os.path.join(BASE_DIR, "ngrok.exe")
 NGROK_ZIP_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
 
 
+def kill_existing_services():
+    """Kills any dangling ngrok or chart server instances to prevent ERR_NGROK_334 and port conflicts."""
+    try:
+        import psutil
+        curr_pid = os.getpid()
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                pid = proc.info.get('pid')
+                if pid == curr_pid:
+                    continue
+                name = (proc.info.get('name') or '').lower()
+                cmdline = " ".join(proc.info.get('cmdline') or []).lower()
+                if 'ngrok' in name or ('live_server.py' in cmdline):
+                    proc.kill()
+            except Exception:
+                pass
+    except Exception:
+        subprocess.run(["taskkill", "/F", "/IM", "ngrok.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def ensure_ngrok() -> str:
-    """Ensures ngrok.exe is installed and up-to-date."""
+    """Ensures ngrok.exe is installed, up-to-date (v3.19+), and operational."""
     # 1. Local workspace executable
     if os.path.exists(NGROK_EXE):
-        return NGROK_EXE
+        try:
+            res = subprocess.run([NGROK_EXE, "version"], capture_output=True, text=True, timeout=5)
+            ver_str = res.stdout.strip()
+            # If older than 3.19, auto-update to latest
+            if any(old_v in ver_str for old_v in [" 3.0.", " 3.1.", " 3.2.", " 3.3.", " 3.4.", " 3.5.", " 3.6.", " 3.7.", " 3.8.", " 3.9.", " 3.10.", " 3.11.", " 3.12.", " 3.13.", " 3.14.", " 3.15.", " 3.16.", " 3.17.", " 3.18."]):
+                print(f"[*] Upgrading outdated ngrok agent ({ver_str})...")
+                subprocess.run([NGROK_EXE, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+            return NGROK_EXE
+        except Exception:
+            return NGROK_EXE
 
     # 2. System PATH
     found = shutil.which("ngrok")
@@ -51,7 +80,11 @@ def ensure_ngrok() -> str:
             zip_ref.extract("ngrok.exe", BASE_DIR)
         if os.path.exists(zip_path):
             os.remove(zip_path)
-        print("[OK] ngrok.exe installed successfully!")
+        try:
+            subprocess.run([NGROK_EXE, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+        except Exception:
+            pass
+        print("[OK] ngrok.exe installed and updated successfully!")
         return NGROK_EXE
     except Exception as e:
         print(f"[!] Warning: Failed to download ngrok automatically ({e}). Continuing without tunnel.")
@@ -97,6 +130,10 @@ def set_process_priority(proc: subprocess.Popen, priority_str: str = "BELOW_NORM
 def main():
     os.makedirs(LOGS_DIR, exist_ok=True)
 
+    # Clean up any leftover background services from previous runs
+    kill_existing_services()
+    time.sleep(0.5)
+
     # Separate bot args from orchestrator args
     raw_args = sys.argv[1:]
     use_tunnel = True
@@ -119,23 +156,45 @@ def main():
         print("  >>> STARTING DCC INSTITUTIONAL TRADING ENVIRONMENT <<<")
         print("=" * 80)
         print(f"[*] [1/3] Launching Live TradingView Chart Server on port {PORT} (Low CPU Priority)...")
-        server_log = open(os.path.join(LOGS_DIR, "chart_server.log"), "a", encoding="utf-8")
+        server_log = open(os.path.join(LOGS_DIR, "chart_server.log"), "w", encoding="utf-8")
         server_cmd = [sys.executable, os.path.join(BASE_DIR, "live_server.py"), "--port", str(PORT)]
         server_proc = subprocess.Popen(server_cmd, stdout=server_log, stderr=server_log)
         set_process_priority(server_proc, "BELOW_NORMAL")
-        time.sleep(1.2)
+        time.sleep(1.0)
+
+        # Health check chart server
+        if server_proc.poll() is not None:
+            print("[ERROR] Live Chart Server failed to start! Details from logs/chart_server.log:")
+            server_log.flush()
+            if os.path.exists(os.path.join(LOGS_DIR, "chart_server.log")):
+                with open(os.path.join(LOGS_DIR, "chart_server.log"), "r", encoding="utf-8") as f:
+                    print(f.read())
+            sys.exit(1)
 
         # Step 2: Start Permanent Web Tunnel (if enabled)
+        tunnel_active = False
         if use_tunnel:
             ngrok_bin = ensure_ngrok()
             if ngrok_bin:
                 configure_authtoken(ngrok_bin)
                 print(f"[*] [2/3] Launching Permanent Web Tunnel -> https://{PERMANENT_DOMAIN} (Low CPU Priority)...")
-                tunnel_log = open(os.path.join(LOGS_DIR, "tunnel.log"), "a", encoding="utf-8")
+                tunnel_log = open(os.path.join(LOGS_DIR, "tunnel.log"), "w", encoding="utf-8")
                 tunnel_cmd = [ngrok_bin, "http", f"--url={PERMANENT_DOMAIN}", str(PORT)]
                 tunnel_proc = subprocess.Popen(tunnel_cmd, stdout=tunnel_log, stderr=tunnel_log)
                 set_process_priority(tunnel_proc, "BELOW_NORMAL")
-                time.sleep(1.5)
+                time.sleep(2.0)
+
+                # Health check tunnel
+                if tunnel_proc.poll() is not None:
+                    tunnel_log.flush()
+                    print(f"[!] Warning: Web tunnel did not start. Details from logs/tunnel.log:")
+                    if os.path.exists(os.path.join(LOGS_DIR, "tunnel.log")):
+                        with open(os.path.join(LOGS_DIR, "tunnel.log"), "r", encoding="utf-8") as f:
+                            err_content = f.read().strip()
+                            print(err_content if err_content else "Process exited unexpectedly.")
+                    print("[!] Continuing in Local Browser mode only.")
+                else:
+                    tunnel_active = True
             else:
                 print("[!] Skipping tunnel (ngrok executable not available).")
         else:
@@ -145,7 +204,7 @@ def main():
         print("\n" + "*" * 80)
         print("  >>> LIVE MONITORING SYSTEM READY <<<")
         print("  * Local Browser:    http://127.0.0.1:" + str(PORT))
-        if use_tunnel:
+        if tunnel_active:
             print(f"  * Permanent Web:    https://{PERMANENT_DOMAIN}")
         print("*" * 80 + "\n")
 

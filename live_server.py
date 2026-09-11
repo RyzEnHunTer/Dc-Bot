@@ -237,12 +237,15 @@ class LiveChartHandler(SimpleHTTPRequestHandler):
 
     def send_json_response(self, data: Any):
         """Sends optimized JSON response with explicit Content-Length (instant socket completion)."""
-        body = json.dumps(data).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            pass
 
     def do_GET(self):
         req_path = self.path.split("?")[0]
