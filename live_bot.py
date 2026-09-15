@@ -2063,14 +2063,69 @@ class InstitutionalDCCBot:
                 )
 
     def _run_nightly_audit_async(self, audit_date: datetime.date):
-        """Executes nightly forensic tick backtest & reconciliation in a non-blocking background thread."""
+        """Executes daily PnL performance summary and nightly forensic tick reconciliation in a non-blocking background thread."""
         try:
-            print(f"\n[NightlyReconciler] Session close reached ({self.entry_end_hour_utc}:05 UTC). Triggering automated nightly reconciliation...")
+            now_utc = datetime.now(timezone.utc)
+            print(f"\n[DailySummary] Session close reached ({self.entry_end_hour_utc}:05 UTC / {now_utc.astimezone(self.tz_ist).strftime('%H:%M')} IST). Compiling daily performance scorecard...")
+
+            # 1. Calculate and dispatch End-of-Day PnL Summary
+            account = mt5.account_info()
+            cur_equity = float(account.equity) if account else self.daily_starting_equity
+            cur_balance = float(account.balance) if account else self.daily_starting_equity
+            start_eq = self.daily_starting_equity if self.daily_starting_equity > 0 else cur_balance
+            day_pnl = cur_equity - start_eq
+            day_pnl_pct = (day_pnl / start_eq * 100.0) if start_eq > 0 else 0.0
+            cur_daily_loss = max(0.0, -day_pnl)
+            daily_dd_pct = (cur_daily_loss / start_eq * 100.0) if start_eq > 0 else 0.0
+            max_allowed_loss = start_eq * (self.daily_cb_pct / 100.0)
+            cushion_remaining = max(0.0, max_allowed_loss - cur_daily_loss)
+
+            day_start_dt = datetime(audit_date.year, audit_date.month, audit_date.day, 0, 0, tzinfo=timezone.utc)
+            deals = mt5.history_deals_get(day_start_dt, now_utc)
+            closed_deals = []
+            win_count = 0
+            loss_count = 0
+
+            if deals:
+                exit_deals = [d for d in deals if d.entry == 1]
+                for d in exit_deals:
+                    p = float(d.profit + d.commission + d.swap)
+                    if p > 0:
+                        win_count += 1
+                    elif p < 0:
+                        loss_count += 1
+                    dir_str = "BUY" if d.type == 0 else "SELL"
+                    closed_deals.append({
+                        "ticket": d.ticket,
+                        "symbol": d.symbol,
+                        "type": dir_str,
+                        "volume": d.volume,
+                        "profit": round(p, 2),
+                        "comment": d.comment
+                    })
+
+            self.notifier.notify_daily_summary(
+                date_str=audit_date.strftime("%Y-%m-%d"),
+                starting_equity=start_eq,
+                closing_equity=cur_equity,
+                balance=cur_balance,
+                trades_count=len(closed_deals),
+                winning_trades=win_count,
+                losing_trades=loss_count,
+                daily_pnl=round(day_pnl, 2),
+                daily_pnl_pct=round(day_pnl_pct, 2),
+                daily_dd_pct=round(daily_dd_pct, 2),
+                cushion_remaining=round(cushion_remaining, 2),
+                closed_trades_details=closed_deals
+            )
+
+            # 2. Trigger automated nightly reconciliation
+            print(f"[NightlyReconciler] Triggering automated nightly tick replay & deal reconciliation...")
             from nightly_reconciler import NightlyReconciler
             reconciler = NightlyReconciler(symbols=self.symbols)
             reconciler.run(audit_date)
         except Exception as e:
-            print(f"[NightlyReconciler] Background audit error: {e}")
+            print(f"[DailySummary/NightlyReconciler] Background audit error: {e}")
 
     def run(self):
         print("\n[InstitutionalDCCBot] Starting Live Monitoring Loop...")

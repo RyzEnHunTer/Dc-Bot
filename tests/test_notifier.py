@@ -44,7 +44,7 @@ class TestNotificationEngine(unittest.TestCase):
 
     def test_mutual_exclusivity(self):
         """Verifies only one platform can be active at a time."""
-        nm = NotificationManager()
+        nm = NotificationManager(config={"active_platform": "none"})
         self.assertEqual(nm.active_platform, "none")
 
         nm.update_config({"active_platform": "telegram", "telegram_bot_token": "tok", "telegram_chat_id": "123"})
@@ -53,6 +53,29 @@ class TestNotificationEngine(unittest.TestCase):
         nm.update_config({"active_platform": "discord", "discord_webhook_url": "https://discord.com/api/..."})
         self.assertEqual(nm.active_platform, "discord")
         print("[PASS] Mutual exclusivity verified: Platform switches cleanly between None, Telegram, and Discord.")
+
+    def test_daily_summary_notification(self):
+        """Verifies that notify_daily_summary formats and enqueues end-of-day scorecard cleanly."""
+        nm = NotificationManager(config={"active_platform": "discord", "discord_webhook_url": "https://dummy"})
+        nm.notify_daily_summary(
+            date_str="2026-09-15",
+            starting_equity=5000.0,
+            closing_equity=5125.50,
+            balance=5125.50,
+            trades_count=2,
+            winning_trades=2,
+            losing_trades=0,
+            daily_pnl=125.50,
+            daily_pnl_pct=2.51,
+            daily_dd_pct=0.0,
+            cushion_remaining=150.0,
+            closed_trades_details=[
+                {"ticket": 101, "symbol": "XAUUSD", "type": "SELL", "volume": 0.02, "profit": 62.75, "comment": "TP1"},
+                {"ticket": 102, "symbol": "XAUUSD", "type": "SELL", "volume": 0.02, "profit": 62.75, "comment": "TP2"}
+            ]
+        )
+        self.assertFalse(nm.msg_queue.empty())
+        print("[PASS] notify_daily_summary formatted and enqueued successfully.")
 
     def test_account_config_persistence(self):
         """Verifies saving and retrieving notification settings in AccountConfigManager."""

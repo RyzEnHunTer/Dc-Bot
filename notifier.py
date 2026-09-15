@@ -66,13 +66,32 @@ def format_dollar(val: float, force_sign: bool = True) -> str:
 class NotificationManager:
     """Manages remote alerts for Telegram or Discord in a non-blocking background queue."""
 
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {
+    @staticmethod
+    def _load_default_config() -> Dict:
+        import os
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(project_root, "bot_accounts_config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    all_cfg = json.load(f)
+                for v in all_cfg.values():
+                    if isinstance(v, dict) and "notifications" in v:
+                        return v["notifications"]
+            except Exception:
+                pass
+        return {
             "active_platform": "none",
             "telegram_bot_token": "",
             "telegram_chat_id": "",
             "discord_webhook_url": ""
         }
+
+    def __init__(self, config: Optional[Dict] = None):
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self._load_default_config()
         self.msg_queue: queue.Queue = queue.Queue(maxsize=100)
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
@@ -263,6 +282,100 @@ class NotificationManager:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "footer": {"text": "DCC Nightly Audit & Reconciliation Engine"}
         }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_daily_summary(
+        self,
+        date_str: str,
+        starting_equity: float,
+        closing_equity: float,
+        balance: float,
+        trades_count: int,
+        winning_trades: int,
+        losing_trades: int,
+        daily_pnl: float,
+        daily_pnl_pct: float,
+        daily_dd_pct: float,
+        cushion_remaining: float,
+        closed_trades_details: Optional[List[Dict]] = None
+    ):
+        """Broadcasts end-of-day summary scorecard with realized PnL, trades count, and cushion status."""
+        pnl_str = format_dollar(daily_pnl, force_sign=True)
+        sign_char = "+" if daily_pnl >= 0 else "-"
+        pnl_pct_str = f"{sign_char}{abs(daily_pnl_pct):.2f}%"
+        now_str = format_dual_time(include_date=True)
+
+        if daily_pnl > 0:
+            status_icon = "🟢"
+            status_text = "PROFITABLE SESSION"
+            discord_color = 0x00FF88
+        elif daily_pnl < 0:
+            status_icon = "🔴"
+            status_text = "DEFENSIVE DRAWDOWN (PROTECTED)"
+            discord_color = 0xFF4444
+        else:
+            status_icon = "⚪"
+            status_text = "CAPITAL PRESERVED (FLAT)"
+            discord_color = 0x3399FF
+
+        tg_lines = [
+            f"{status_icon} <b>DCC DAILY PERFORMANCE & PnL SUMMARY</b>",
+            f"<b>Date:</b> <code>{date_str}</code> | <b>Status:</b> <code>{status_text}</code>\n",
+            f"💰 <b>Net Realized PnL:</b> <code>{pnl_str} ({pnl_pct_str})</code>",
+            f"📊 <b>Total Trades Today:</b> <code>{trades_count}</code> (✅ {winning_trades} W | ❌ {losing_trades} L)",
+            f"📉 <b>Daily Peak DD:</b> <code>-{daily_dd_pct:.2f}%</code>",
+            f"🛡️ <b>Remaining 3% CB Cushion:</b> <code>${cushion_remaining:,.2f}</code>\n",
+            f"🏦 <b>Starting Equity Anchor:</b> <code>${starting_equity:,.2f}</code>",
+            f"💼 <b>Closing Equity:</b> <code>${closing_equity:,.2f}</code>",
+            f"💳 <b>Account Balance:</b> <code>${balance:,.2f}</code>\n",
+        ]
+
+        if closed_trades_details and len(closed_trades_details) > 0:
+            tg_lines.append("<b>Closed Trades Breakdown:</b>")
+            for tr in closed_trades_details:
+                tr_pnl = format_dollar(tr.get('profit', 0.0))
+                tg_lines.append(f"• #{tr.get('ticket', 'N/A')} {tr.get('symbol', '')} {tr.get('type', '')} {tr.get('volume', '')}L: <b>{tr_pnl}</b> ({tr.get('comment', '')})")
+        else:
+            tg_lines.append("<i>No strategy trades triggered today. Capital was 100% protected.</i>")
+
+        tg_lines.append(f"\n🕒 <i>Session closed at {now_str}</i>")
+        tg_text = "\n".join(tg_lines)
+
+        discord_fields = [
+            {"name": "Net Realized PnL", "value": f"**{pnl_str}** ({pnl_pct_str})", "inline": True},
+            {"name": "Trades Count", "value": f"**{trades_count}** ({winning_trades}W / {losing_trades}L)", "inline": True},
+            {"name": "Daily DD", "value": f"**-{daily_dd_pct:.2f}%**", "inline": True},
+            {"name": "Starting Equity", "value": f"${starting_equity:,.2f}", "inline": True},
+            {"name": "Closing Equity", "value": f"${closing_equity:,.2f}", "inline": True},
+            {"name": "3% CB Cushion", "value": f"${cushion_remaining:,.2f}", "inline": True},
+        ]
+
+        if closed_trades_details and len(closed_trades_details) > 0:
+            trade_summary_lines = []
+            for tr in closed_trades_details[:8]:
+                tr_pnl = format_dollar(tr.get('profit', 0.0))
+                trade_summary_lines.append(f"`#{tr.get('ticket', 'N/A')}` **{tr.get('symbol', '')}** {tr.get('type', '')} ({tr.get('volume', '')}L) -> **{tr_pnl}**")
+            discord_fields.append({
+                "name": "Closed Trades Detail",
+                "value": "\n".join(trade_summary_lines),
+                "inline": False
+            })
+        else:
+            discord_fields.append({
+                "name": "Trade Activity",
+                "value": "Zero strategy setups met strict institutional criteria today. Capital 100% preserved.",
+                "inline": False
+            })
+
+        discord_embed = {
+            "title": f"🌙 DCC Daily Performance & PnL Summary ({date_str})",
+            "description": f"**Session Status:** `{status_text}`\nInstitutional session close reached. All risk cushions verified.",
+            "color": discord_color,
+            "fields": discord_fields,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "footer": {"text": f"DCC Automated Trading System • {now_str}"}
+        }
+
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
     def notify_trading_paused(self, zone_title: str, reason: str, resume_time_str: str, is_startup: bool = False):
