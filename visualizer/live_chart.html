@@ -701,6 +701,12 @@
         <span id="btn-deals-count">Deals (0)</span>
       </button>
 
+      <!-- Nightly Forensic Audit Scorecard Modal Button -->
+      <button class="fit-btn" id="btn-audit-toggle" title="View Daily Forensic Backtest & Live Reconciliation Audit">
+        <span>🌙</span>
+        <span>Audit Scorecard</span>
+      </button>
+
       <!-- Theme Switcher (Monochrome Light / Dark) -->
       <button class="theme-toggle-btn" id="btn-theme-toggle" title="Toggle Light/Dark Theme">
         <span id="theme-icon">🌙 Dark</span>
@@ -849,6 +855,49 @@
           </thead>
           <tbody id="deals-table-body">
             <tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:16px;">No closed trades today.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daily Forensic Audit Scorecard Modal -->
+  <div id="audit-modal" class="deals-modal-overlay" style="display:none;">
+    <div class="deals-modal-content" style="max-width: 860px;">
+      <div class="deals-modal-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:16px;">🌙</span>
+          <span style="font-weight:700; font-size:14px; color:var(--text-bright);">DCC Daily Forensic Audit & Reconciliation Scorecard</span>
+        </div>
+        <button id="btn-close-audit" class="modal-close-btn">&times;</button>
+      </div>
+      <div style="padding: 10px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; gap: 14px; font-size: 11px; align-items: center;">
+          <div><span style="color:var(--text-muted)">Date:</span> <b id="audit-date" style="color:var(--text-bright)">--</b></div>
+          <div><span style="color:var(--text-muted)">Match Rate:</span> <b id="audit-match-rate" style="color:var(--color-green)">--%</b></div>
+          <div><span style="color:var(--text-muted)">Signals:</span> <b id="audit-signals" style="color:var(--text-bright)">0</b></div>
+          <div><span style="color:var(--text-muted)">Live Deals:</span> <b id="audit-live-deals" style="color:var(--text-bright)">0</b></div>
+          <div><span style="color:var(--text-muted)">Backtest PnL:</span> <b id="audit-bt-pnl" style="color:var(--text-bright)">$0.00</b></div>
+          <div><span style="color:var(--text-muted)">Live PnL:</span> <b id="audit-live-pnl" style="color:var(--text-bright)">$0.00</b></div>
+        </div>
+        <button id="btn-refresh-audit" class="fit-btn" style="padding: 3px 8px; font-size: 11px;">↻ Refresh</button>
+      </div>
+      <div class="deals-table-container" style="max-height: 55vh;">
+        <table class="deals-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Symbol</th>
+              <th>Dir</th>
+              <th>Signal Time</th>
+              <th>Ticket</th>
+              <th>Backtest PnL</th>
+              <th>Live PnL</th>
+              <th>Forensic Diagnosis</th>
+            </tr>
+          </thead>
+          <tbody id="audit-table-body">
+            <tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:20px;">Loading nightly audit data...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1598,6 +1647,89 @@
             dealsModal.style.display = 'none';
           }
         });
+      }
+
+      // Nightly Forensic Audit Scorecard Modal Toggle
+      const auditModal = document.getElementById('audit-modal');
+      const btnAudit = document.getElementById('btn-audit-toggle');
+      const btnCloseAudit = document.getElementById('btn-close-audit');
+      const btnRefreshAudit = document.getElementById('btn-refresh-audit');
+
+      if (btnAudit && auditModal) {
+        btnAudit.addEventListener('click', () => {
+          auditModal.style.display = 'flex';
+          loadNightlyAudit();
+        });
+      }
+      if (btnCloseAudit && auditModal) {
+        btnCloseAudit.addEventListener('click', () => {
+          auditModal.style.display = 'none';
+        });
+      }
+      if (btnRefreshAudit) {
+        btnRefreshAudit.addEventListener('click', () => {
+          loadNightlyAudit();
+        });
+      }
+      if (auditModal) {
+        auditModal.addEventListener('click', (e) => {
+          if (e.target === auditModal) {
+            auditModal.style.display = 'none';
+          }
+        });
+      }
+    }
+
+    async function loadNightlyAudit() {
+      const tableBody = document.getElementById('audit-table-body');
+      try {
+        const res = await fetch('/api/nightly_audit');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (data.status === 'NO_AUDIT_AVAILABLE') {
+          tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:20px;">No nightly audit scorecard available yet. Audits trigger automatically at 19:05 UTC.</td></tr>';
+          return;
+        }
+
+        const s = data.summary || {};
+        document.getElementById('audit-date').textContent = data.date || '--';
+        const rate = s.match_rate_pct != null ? s.match_rate_pct : 100.0;
+        const rateEl = document.getElementById('audit-match-rate');
+        rateEl.textContent = rate + '%';
+        rateEl.style.color = rate >= 90 ? 'var(--color-green)' : (rate >= 70 ? '#ffb300' : 'var(--color-red)');
+
+        document.getElementById('audit-signals').textContent = s.total_backtest_signals || 0;
+        document.getElementById('audit-live-deals').textContent = s.total_live_entries || 0;
+        document.getElementById('audit-bt-pnl').textContent = '$' + (s.backtest_net_pnl != null ? s.backtest_net_pnl.toFixed(2) : '0.00');
+        document.getElementById('audit-live-pnl').textContent = '$' + (s.live_broker_net_pnl != null ? s.live_broker_net_pnl.toFixed(2) : '0.00');
+
+        const items = data.reconciliation_details || [];
+        if (items.length === 0) {
+          tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:20px;">No strategy setups or live trades recorded for ${data.date}.</td></tr>`;
+          return;
+        }
+
+        tableBody.innerHTML = items.map(item => {
+          const isMatch = item.status === 'MATCHED_SUCCESS';
+          const badgeClass = isMatch ? 'badge-buy' : 'badge-sell';
+          const statusText = isMatch ? 'MATCHED' : 'FLAGGED';
+          const pnlColor = item.live_pnl > 0 ? 'var(--color-green)' : (item.live_pnl < 0 ? 'var(--color-red)' : 'var(--text-muted)');
+          const btPnlColor = item.backtest_pnl > 0 ? 'var(--color-green)' : (item.backtest_pnl < 0 ? 'var(--color-red)' : 'var(--text-muted)');
+          return `
+            <tr>
+              <td><span class="trade-status-badge ${badgeClass}" style="font-size:9px;">${statusText}</span></td>
+              <td><b>${item.symbol}</b></td>
+              <td>${item.direction}</td>
+              <td style="font-size:10px;">${item.signal_time}</td>
+              <td>${item.live_ticket || 'N/A'}</td>
+              <td style="color:${btPnlColor}; font-weight:600;">$${Number(item.backtest_pnl || 0).toFixed(2)}</td>
+              <td style="color:${pnlColor}; font-weight:600;">$${Number(item.live_pnl || 0).toFixed(2)}</td>
+              <td style="font-size:10px; color:var(--text-muted);">${item.discrepancy_reason}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--color-red); padding:20px;">Failed to load audit scorecard: ${err.message}</td></tr>`;
       }
     }
 

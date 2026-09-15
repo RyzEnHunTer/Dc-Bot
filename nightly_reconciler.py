@@ -604,6 +604,18 @@ class NightlyReconciler:
         json_path, md_path = self.storage.save_daily_report(date_str, audit_result, md_report)
         print(f"[OK] Saved daily audit report to: {json_path}")
 
+        # Cloud Archival to Google Drive under 'bot backtest/YYYY-MM-DD/'
+        target_subfolder = target_date.strftime("%Y-%m-%d")
+        ok_drive, msg_drive = self.storage.archive_to_google_drive(
+            json_path, folder_name="bot backtest", subfolder_date=target_subfolder
+        )
+        if ok_drive:
+            print(f"[Storage] Daily JSON scorecard archived to Google Drive: {msg_drive}")
+        if md_path:
+            self.storage.archive_to_google_drive(
+                md_path, folder_name="bot backtest", subfolder_date=target_subfolder
+            )
+
         # Prune aged reports (> 7 days)
         print(f"[*] [4/4] Checking rolling 7-day disk retention...")
         pruned = self.storage.prune_aged_reports(archive_before_delete=True)

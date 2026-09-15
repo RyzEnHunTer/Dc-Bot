@@ -391,7 +391,11 @@ class LiveChartHandler(SimpleHTTPRequestHandler):
 
         # Route 3: Nightly Audit Scorecard API
         elif req_path == "/api/nightly_audit":
-            audit_file = os.path.join(PROJECT_ROOT, "reports", "daily_audits", "audit_reconciliation_latest.json")
+            date_req = query_params.get("date", "").replace("-", "")
+            if date_req:
+                audit_file = os.path.join(PROJECT_ROOT, "reports", "daily_audits", f"audit_reconciliation_{date_req}.json")
+            else:
+                audit_file = os.path.join(PROJECT_ROOT, "reports", "daily_audits", "audit_reconciliation_latest.json")
             if os.path.exists(audit_file):
                 try:
                     with open(audit_file, "r", encoding="utf-8") as f:
