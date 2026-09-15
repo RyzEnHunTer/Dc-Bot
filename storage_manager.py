@@ -79,19 +79,31 @@ class StorageManager:
     def archive_to_google_drive(
         self,
         file_path: str,
-        folder_name: str = "DCC_Backtest_Reports"
+        folder_name: str = "bot backtest",
+        subfolder_date: Optional[str] = None
     ) -> Tuple[bool, str]:
         """
-        Uploads a file to Google Drive.
+        Uploads a file to Google Drive under folder_name / subfolder_date (e.g. 'bot backtest/2026-09-14/').
         Supports:
-        1. Google Drive Webhook URL (e.g. Google Apps Script endpoint)
-        2. Google Service Account JSON (via google-api-python-client / pydrive2 if installed)
+        1. Google Drive Webhook URL (Google Apps Script)
+        2. Google Service Account credentials JSON
         """
         if not os.path.exists(file_path):
             return False, f"File not found: {file_path}"
 
         filename = os.path.basename(file_path)
         cfg = self._load_config()
+
+        # Determine subfolder date if not provided
+        if not subfolder_date:
+            import re
+            m = re.search(r"20\d{2}[-_]?\d{2}[-_]?\d{2}", filename)
+            if m:
+                raw_d = m.group(0).replace("-", "").replace("_", "")
+                if len(raw_d) == 8:
+                    subfolder_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}"
+            if not subfolder_date:
+                subfolder_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         # Method 1: Google Apps Script / Drive Webhook Endpoint
         webhook_url = cfg.get("google_drive_webhook_url", "").strip() or os.getenv("GDRIVE_WEBHOOK_URL", "").strip()
@@ -103,6 +115,7 @@ class StorageManager:
                 payload = {
                     "filename": filename,
                     "folder": folder_name,
+                    "subfolder": subfolder_date,
                     "content_b64": content_b64,
                     "uploaded_at": datetime.now(timezone.utc).isoformat()
                 }
@@ -115,7 +128,7 @@ class StorageManager:
                 )
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     if resp.status in (200, 201):
-                        return True, f"Uploaded {filename} to Google Drive via Webhook."
+                        return True, f"Uploaded {filename} to Google Drive under '{folder_name}/{subfolder_date}/'."
                     return False, f"Google Drive Webhook HTTP {resp.status}"
             except Exception as e:
                 return False, f"Google Drive Webhook error: {e}"
@@ -133,28 +146,43 @@ class StorageManager:
                 creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
                 service = build('drive', 'v3', credentials=creds)
 
-                # Search or create folder
+                # 1. Search or create root folder (e.g. 'bot backtest')
                 query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
                 results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
                 items = results.get('files', [])
                 if items:
-                    folder_id = items[0]['id']
+                    root_folder_id = items[0]['id']
                 else:
                     folder_metadata = {
                         'name': folder_name,
                         'mimeType': 'application/vnd.google-apps.folder'
                     }
                     folder = service.files().create(body=folder_metadata, fields='id').execute()
-                    folder_id = folder.get('id')
+                    root_folder_id = folder.get('id')
 
-                # Upload file
+                # 2. Search or create subfolder by date (e.g. '2026-09-14') inside root folder
+                sub_query = f"name='{subfolder_date}' and '{root_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                sub_results = service.files().list(q=sub_query, spaces='drive', fields='files(id, name)').execute()
+                sub_items = sub_results.get('files', [])
+                if sub_items:
+                    target_folder_id = sub_items[0]['id']
+                else:
+                    sub_metadata = {
+                        'name': subfolder_date,
+                        'parents': [root_folder_id],
+                        'mimeType': 'application/vnd.google-apps.folder'
+                    }
+                    sub_folder = service.files().create(body=sub_metadata, fields='id').execute()
+                    target_folder_id = sub_folder.get('id')
+
+                # 3. Upload file inside target subfolder
                 file_metadata = {
                     'name': filename,
-                    'parents': [folder_id]
+                    'parents': [target_folder_id]
                 }
                 media = MediaFileUpload(file_path, resumable=True)
                 uploaded = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-                return True, f"Uploaded {filename} to Google Drive (ID: {uploaded.get('id')})"
+                return True, f"Uploaded {filename} to Google Drive: '{folder_name}/{subfolder_date}/' (ID: {uploaded.get('id')})"
             except ImportError:
                 return False, "Google API client not installed (run: pip install google-api-python-client google-auth)"
             except Exception as e:
