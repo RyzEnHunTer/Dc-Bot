@@ -272,6 +272,18 @@
       color: #64b5f6;
     }
 
+    .session-badge.badge-weekend {
+      background: rgba(120, 123, 134, 0.15);
+      border: 1px solid rgba(120, 123, 134, 0.4);
+      color: #787b86;
+    }
+
+    [data-theme="dark"] .session-badge.badge-weekend {
+      background: rgba(120, 123, 134, 0.25);
+      border: 1px solid rgba(120, 123, 134, 0.5);
+      color: #b0bec5;
+    }
+
     /* Main Chart Layout */
     .main-container {
       display: flex;
@@ -801,7 +813,7 @@
   <div class="bottom-bar">
     <div class="status-left">
       <div class="status-item">
-        <span class="dot"></span>
+        <span class="dot" id="status-bot-dot"></span>
         <span id="status-bot">BOT CONNECTED & SURVEILLANCE ACTIVE</span>
       </div>
       <span>•</span>
@@ -1463,6 +1475,9 @@
         const cbBanner = document.getElementById('cb-alert-banner');
         const cbText = document.getElementById('cb-alert-text');
 
+        const statusBotEl = document.getElementById('status-bot');
+        const statusDotEl = document.getElementById('status-bot-dot');
+
         if (acc.circuit_breaker_active) {
           cushionEl.className = "val red";
           cushionEl.innerText = "HALTED ($0.00)";
@@ -1472,11 +1487,22 @@
             cbBanner.style.display = "flex";
             if (cbText) cbText.innerText = `⚠️ DAILY CIRCUIT BREAKER ACTIVE (-${acc.daily_dd_pct.toFixed(2)}%): Trading halted for remainder of day. Capital is 100% protected.`;
           }
+          if (statusBotEl) statusBotEl.innerText = "CIRCUIT BREAKER HALTED - CAPITAL PROTECTED";
+          if (statusDotEl) statusDotEl.style.background = "#d32f2f";
         } else {
           cushionEl.className = "val green";
           cushionEl.innerText = `$${acc.remaining_cushion.toFixed(2)}`;
-          sessionEl.className = "session-badge";
-          sessionEl.innerText = acc.session || "ACTIVE";
+          if (acc.session === "PAUSED_WEEKEND") {
+            sessionEl.className = "session-badge badge-weekend";
+            sessionEl.innerText = "WEEKEND CLOSED";
+            if (statusBotEl) statusBotEl.innerText = "MARKET CLOSED (WEEKEND) - RESUMES MON 06:00 UTC";
+            if (statusDotEl) statusDotEl.style.background = "#787b86";
+          } else {
+            sessionEl.className = "session-badge";
+            sessionEl.innerText = acc.session || "ACTIVE";
+            if (statusBotEl) statusBotEl.innerText = "BOT CONNECTED & SURVEILLANCE ACTIVE";
+            if (statusDotEl) statusDotEl.style.background = "#00c853";
+          }
           if (cbBanner) cbBanner.style.display = "none";
         }
 

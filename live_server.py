@@ -72,6 +72,18 @@ def lower_process_priority():
             pass
 
 
+def get_current_trading_day_start_utc(dt: datetime) -> datetime:
+    """Returns 00:00:00 UTC of the active trading day. On Saturday (w=5) and Sunday (w=6),
+    persists Friday's 00:00:00 UTC so Friday's deals, PnL, and CB status persist until Monday 00:00 UTC."""
+    day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    w = dt.weekday()
+    if w == 5:
+        return day_start - timedelta(days=1)
+    elif w == 6:
+        return day_start - timedelta(days=2)
+    return day_start
+
+
 def compute_vwap(df: pd.DataFrame) -> pd.Series:
     """Computes daily resetting session VWAP."""
     typical_price = (df['high'] + df['low'] + df['close']) / 3.0
@@ -208,13 +220,15 @@ def fetch_account_and_history() -> Dict[str, Any]:
             state = {}
 
     # Query closed deals today using naive datetime (MT5 C API requirement)
+    # On Saturday and Sunday, preserves Friday's deals and daily starting equity anchor!
     now_ts = time.time()
+    now_utc = datetime.now(timezone.utc)
+    is_weekend = (now_utc.weekday() in [5, 6]) or (now_utc.weekday() == 4 and now_utc.hour >= 21)
     history_deals_list = []
     if (now_ts - _DEALS_CACHE["timestamp"]) < _DEALS_CACHE_TTL and _DEALS_CACHE["deals"]:
         history_deals_list = _DEALS_CACHE["deals"]
     elif MT5_AVAILABLE and mt5.initialize():
-        now_utc = datetime.now(timezone.utc)
-        today_start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = get_current_trading_day_start_utc(now_utc)
         start_ts = int(today_start_utc.timestamp())
         end_ts = int(now_ts + 86400)
         deals = mt5.history_deals_get(start_ts, end_ts)
@@ -271,9 +285,14 @@ def fetch_account_and_history() -> Dict[str, Any]:
                     "daily_cb_pct": daily_cb_pct,
                     "remaining_cushion": round(remaining_cushion, 2),
                     "circuit_breaker_active": cb_active,
-                    "session": "PAUSED_CB" if cb_active else acc_data.get("session", "ACTIVE")
+                    "session": "PAUSED_CB" if cb_active else ("PAUSED_WEEKEND" if is_weekend else acc_data.get("session", "ACTIVE"))
                 })
                 state["account"] = acc_data
+
+    # Ensure weekend status reflects accurately even when bot live_state is fresh
+    if is_weekend and "account" in state:
+        if not state["account"].get("circuit_breaker_active", False):
+            state["account"]["session"] = "PAUSED_WEEKEND"
 
     # Reconcile active positions directly from MT5 so chart geometry is always complete
     if MT5_AVAILABLE and mt5.initialize():

@@ -238,6 +238,42 @@ class TestNotificationEngine(unittest.TestCase):
 
         print("[PASS] Rich trade notifications verified: TP1 profit, breakdowns, daily PnL & cushions.")
 
+    def test_weekend_market_closure_and_day_persistence(self):
+        """Verifies weekend market closure detection and Friday trading day persistence."""
+        from datetime import datetime, timezone
+        from live_bot import InstitutionalDCCBot, get_current_trading_day_start_utc
+        bot = InstitutionalDCCBot(symbols=["XAUUSD"])
+
+        # Friday 14:00 UTC (Active NY)
+        fri_dt = datetime(2026, 9, 11, 14, 0, tzinfo=timezone.utc)
+        fri_start = get_current_trading_day_start_utc(fri_dt)
+        self.assertEqual(fri_start, datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(bot.get_session_state(fri_dt), "ACTIVE_NY")
+
+        # Friday 22:00 UTC (Post-close weekend)
+        fri_late = datetime(2026, 9, 11, 22, 0, tzinfo=timezone.utc)
+        self.assertEqual(bot.get_session_state(fri_late), "PAUSED_WEEKEND")
+
+        # Saturday 10:00 UTC (Market closed - persists Friday anchor!)
+        sat_dt = datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc)
+        sat_start = get_current_trading_day_start_utc(sat_dt)
+        self.assertEqual(sat_start, datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(bot.get_session_state(sat_dt), "PAUSED_WEEKEND")
+
+        # Sunday 18:00 UTC (Market closed - persists Friday anchor!)
+        sun_dt = datetime(2026, 9, 13, 18, 0, tzinfo=timezone.utc)
+        sun_start = get_current_trading_day_start_utc(sun_dt)
+        self.assertEqual(sun_start, datetime(2026, 9, 11, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(bot.get_session_state(sun_dt), "PAUSED_WEEKEND")
+
+        # Monday 08:00 UTC (New trading day begins - Monday anchor!)
+        mon_dt = datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc)
+        mon_start = get_current_trading_day_start_utc(mon_dt)
+        self.assertEqual(mon_start, datetime(2026, 9, 14, 0, 0, tzinfo=timezone.utc))
+        self.assertEqual(bot.get_session_state(mon_dt), "ACTIVE_LONDON")
+
+        print("[PASS] Weekend market closure and Friday day persistence verified across full cycle.")
+
 
 if __name__ == "__main__":
     unittest.main()

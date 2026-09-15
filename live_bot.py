@@ -257,6 +257,18 @@ def prompt_circuit_breakers(daily_dd: float, max_dd: float, default_auto: bool =
     return chosen_daily_cb, chosen_max_cb
 
 
+def get_current_trading_day_start_utc(dt: datetime) -> datetime:
+    """Returns 00:00:00 UTC of the active trading day. On Saturday (w=5) and Sunday (w=6),
+    persists Friday's 00:00:00 UTC so Friday's deals, PnL, and CB status persist until Monday 00:00 UTC."""
+    day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    w = dt.weekday()
+    if w == 5:
+        return day_start - timedelta(days=1)
+    elif w == 6:
+        return day_start - timedelta(days=2)
+    return day_start
+
+
 class AccountConfigManager:
     """Persistent storage for per-account Risk, Daily DD, Max DD, Circuit Breakers, and High-Water Mark."""
     def __init__(self, config_path: str = CONFIG_FILE_PATH):
@@ -602,10 +614,11 @@ class InstitutionalDCCBot:
             notif_cfg = self.config_mgr.get_notification_config(str(account.login))
             self.notifier.update_config(notif_cfg)
 
-        # Determine True Day Starting Equity in UTC (recovering any deals closed earlier today before bot start)
+        # Determine True Day Starting Equity in UTC (recovering any deals closed earlier on the active trading day)
+        # On Saturday and Sunday, seamlessly persists Friday's starting equity, closed deals, and circuit breaker status
         now_utc = datetime.now(timezone.utc)
-        today_start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-        start_ts = int(today_start_utc.timestamp())
+        active_day_start_utc = get_current_trading_day_start_utc(now_utc)
+        start_ts = int(active_day_start_utc.timestamp())
         end_ts = int(pytime.time() + 86400)
         today_deals = mt5.history_deals_get(start_ts, end_ts)
         closed_pnl_today = 0.0
@@ -614,24 +627,25 @@ class InstitutionalDCCBot:
                 if d.entry == 1:  # Exit deals (closed positions)
                     closed_pnl_today += float(d.profit + d.commission + d.swap)
 
-        # Day Starting Equity = Current Balance - Closed Profit Today
+        # Day Starting Equity = Current Balance - Closed Profit on Active Trading Day
         self.daily_starting_equity = max(0.01, float(account.balance) - closed_pnl_today)
-        self.current_trading_day = now_utc.date()
+        self.current_trading_day = active_day_start_utc.date()
 
-        # Check if Circuit Breaker was already breached earlier today before startup
+        # Check if Circuit Breaker was already breached earlier on active trading day before startup
         cur_day_pnl = float(account.equity) - self.daily_starting_equity
         cur_daily_loss = max(0.0, -cur_day_pnl)
         init_daily_dd_pct = (cur_daily_loss / self.daily_starting_equity) * 100.0 if self.daily_starting_equity > 0 else 0.0
+        day_label = "Friday (Persisted across weekend)" if now_utc.weekday() in [5, 6] else "today"
         if init_daily_dd_pct >= self.daily_cb_pct:
             self.circuit_breaker_active = True
             print("\n" + "!" * 80)
             print(f"[!! RECOVERED PRIOR LOSS: DAILY CIRCUIT BREAKER ACTIVE (-{init_daily_dd_pct:.2f}%) !!]")
-            print(f"Closed deals PnL today:  -${cur_daily_loss:,.2f} | Starting Equity: ${self.daily_starting_equity:,.2f}")
+            print(f"Closed deals PnL ({day_label}):  -${cur_daily_loss:,.2f} | Starting Equity: ${self.daily_starting_equity:,.2f}")
             print(f"Circuit Breaker Limit:   -{self.daily_cb_pct:.1f}% | Cushion: $0.00")
             print("ACTION: Trading remains HALTED for remainder of day to protect account.")
             print("!" * 80 + "\n")
         elif closed_pnl_today != 0.0:
-            print(f"[AUDIT] Recovered prior closed trades today: PnL {'+' if closed_pnl_today >= 0 else ''}${closed_pnl_today:,.2f} | Start Equity: ${self.daily_starting_equity:,.2f}")
+            print(f"[AUDIT] Recovered prior closed trades ({day_label}): PnL {'+' if closed_pnl_today >= 0 else ''}${closed_pnl_today:,.2f} | Start Equity: ${self.daily_starting_equity:,.2f}")
 
         if self.high_water_mark <= 0.0:
             self.high_water_mark = account.equity
@@ -939,13 +953,10 @@ class InstitutionalDCCBot:
             self.notifier.notify_setup_aborted(symbol, dir_str, abort_msg, close_p, 0.0)
             self.armed_states[symbol].is_armed = False
 
-        # 1. Circuit breaker check
-        if self.circuit_breaker_active:
-            decision = "BLOCKED_CIRCUIT_BREAKER"
-            reason = f"Daily -{self.daily_cb_pct:.1f}% Circuit Breaker is ACTIVE (Hard Limit: -{self.daily_dd_limit_pct:.1f}%)"
-            self.armed_states[symbol].is_armed = False
-        # 1b. Dynamic Cushion Exposure Check (Option 1: Fill-the-Cushion Sizing)
-        elif self.daily_starting_equity > 0:
+        # Pre-calculate dynamic cushion exposure
+        is_exposure_capped = False
+        exposure_cap_reason = ""
+        if self.daily_starting_equity > 0:
             account = mt5.account_info()
             cur_equity = float(account.equity) if account else self.daily_starting_equity
             cur_daily_loss = max(0.0, self.daily_starting_equity - cur_equity)
@@ -959,15 +970,31 @@ class InstitutionalDCCBot:
             min_lot_risk = min_split_lot * sl_dist * contract_size
             effective_min_risk = max(min_viable_risk, min_lot_risk)
             if remaining_cushion < effective_min_risk:
-                decision = "BLOCKED_EXPOSURE_CAP"
-                reason = f"Remaining Daily CB Cushion (${remaining_cushion:.2f}) < Min Viable Risk (${effective_min_risk:.2f})"
-                self.armed_states[symbol].is_armed = False
+                is_exposure_capped = True
+                exposure_cap_reason = f"Remaining Daily CB Cushion (${remaining_cushion:.2f}) < Min Viable Risk (${effective_min_risk:.2f})"
+
+        # 1. Circuit breaker check
+        if self.circuit_breaker_active:
+            decision = "BLOCKED_CIRCUIT_BREAKER"
+            reason = f"Daily -{self.daily_cb_pct:.1f}% Circuit Breaker is ACTIVE (Hard Limit: -{self.daily_dd_limit_pct:.1f}%)"
+            self.armed_states[symbol].is_armed = False
+        # 1b. Dynamic Cushion Exposure Check (Option 1: Fill-the-Cushion Sizing)
+        elif is_exposure_capped:
+            decision = "BLOCKED_EXPOSURE_CAP"
+            reason = exposure_cap_reason
+            self.armed_states[symbol].is_armed = False
         # 2. Existing position check
         elif open_pos and len(open_pos) > 0:
             decision = "BLOCKED_POSITION_OPEN"
             reason = f"Trade already active on {symbol} (Ticket #{open_pos[0].ticket})"
             self.armed_states[symbol].is_armed = False
-        # 3. Active Trading Session Filter (06:00 to 19:00 UTC / 11:30 to 00:30 IST)
+        # 3. Weekend Market Closure Filter (Saturday & Sunday / Friday post-close)
+        elif now_utc.weekday() in [5, 6] or (now_utc.weekday() == 4 and now_utc.hour >= self.entry_end_hour_utc):
+            day_name = now_utc.strftime('%A')
+            decision = "SKIPPED_WEEKEND"
+            reason = f"Weekend Market Closed ({day_name}). Trading resumes Monday 06:00 UTC (11:30 IST)."
+            self.armed_states[symbol].is_armed = False
+        # 4. Active Trading Session Filter (06:00 to 19:00 UTC / 11:30 to 00:30 IST)
         # Asian Session and rollover (19:00 to 06:00 UTC) is the Liquidity Range Formation phase, NOT an entry phase.
         elif now_utc.hour < self.entry_start_hour_utc or now_utc.hour >= self.entry_end_hour_utc:
             ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
@@ -1802,7 +1829,7 @@ class InstitutionalDCCBot:
                     "daily_dd_pct": round(daily_dd_pct, 2),
                     "daily_cb_pct": self.daily_cb_pct,
                     "remaining_cushion": round(remaining_cushion, 2),
-                    "session": "PAUSED_CB" if self.circuit_breaker_active else self.get_session_state(now_utc.hour),
+                    "session": "PAUSED_CB" if self.circuit_breaker_active else self.get_session_state(now_utc),
                     "bot_heartbeat": now_utc.isoformat(),
                     "circuit_breaker_active": self.circuit_breaker_active
                 },
@@ -1843,28 +1870,53 @@ class InstitutionalDCCBot:
             except Exception:
                 pass
 
-    def get_session_state(self, hour: int) -> str:
-        """Returns the trading window / killzone state for a given UTC hour."""
-        if hour == 9:
+    def get_session_state(self, time_or_hour: Any, weekday: Optional[int] = None) -> str:
+        """Returns the trading window / killzone state for a given UTC datetime or hour.
+        Seamlessly detects weekend market closure (Saturday, Sunday, and Friday post-close).
+        """
+        if isinstance(time_or_hour, datetime):
+            h = time_or_hour.hour
+            w = time_or_hour.weekday()
+        else:
+            h = int(time_or_hour)
+            w = weekday
+
+        # Weekend Market Closed Check (Saturday = 5, Sunday = 6, Friday post-close = 4 and h >= 21)
+        if w is not None:
+            if w in [5, 6] or (w == 4 and h >= self.entry_end_hour_utc):
+                return "PAUSED_WEEKEND"
+
+        if h == 9:
             return "PAUSED_TRAP_09"
-        elif hour == 13:
+        elif h == 13:
             return "PAUSED_TRAP_13"
-        elif hour < self.entry_start_hour_utc or hour >= self.entry_end_hour_utc:
+        elif h < self.entry_start_hour_utc or h >= self.entry_end_hour_utc:
             return "PAUSED_ASIAN"
-        elif self.entry_start_hour_utc <= hour < 12:
+        elif self.entry_start_hour_utc <= h < 12:
             return "ACTIVE_LONDON"
-        else:  # 12 <= hour < 21 and hour != 13
+        else:  # 12 <= h < 21 and h != 13
             return "ACTIVE_NY"
 
     def check_session_and_trap_alerts(self, now_utc: datetime, is_startup: bool = False):
         """Monitors and broadcasts trading pause and resume milestones to Discord/Telegram.
-        Transitions smoothly across Killzone pauses, Dead Trap Hours, and Active Sessions.
+        Transitions smoothly across Weekend closures, Killzone pauses, Dead Trap Hours, and Active Sessions.
         """
-        new_state = self.get_session_state(now_utc.hour)
+        new_state = self.get_session_state(now_utc)
 
         if is_startup:
             self.current_session_state = new_state
-            if new_state == "PAUSED_TRAP_09":
+            if new_state == "PAUSED_WEEKEND":
+                print("\n" + "=" * 80)
+                print("[=== CURRENT STATUS: PAUSED - WEEKEND MARKET CLOSED ===]")
+                print("Resumes: Monday 06:00 UTC (11:30 IST) at London Session Open")
+                print("=" * 80 + "\n")
+                self.notifier.notify_trading_paused(
+                    zone_title="Weekend Market Closed (Saturday & Sunday)",
+                    reason="Bot started during weekend market closure. Forex & CFD markets (XAUUSD & NAS100) are closed.",
+                    resume_time_str="Monday 06:00 UTC (11:30 IST) - London Session Open",
+                    is_startup=True
+                )
+            elif new_state == "PAUSED_TRAP_09":
                 print("\n" + "=" * 80)
                 print("[=== CURRENT STATUS: PAUSED IN MORNING DEAD TRAP HOUR ===]")
                 print("Resumes: 10:00 UTC (15:30 IST)")
@@ -1905,7 +1957,21 @@ class InstitutionalDCCBot:
         prev_state = self.current_session_state
         self.current_session_state = new_state
 
-        if new_state == "PAUSED_TRAP_09":
+        if new_state == "PAUSED_WEEKEND":
+            for s in self.symbols:
+                self.armed_states[s].is_armed = False
+            print("\n" + "=" * 80)
+            print("[=== TRADING PAUSED: WEEKEND MARKET CLOSED ===]")
+            print("Reason:  Forex & CFD markets closed for the weekend. Capital is 100% protected.")
+            print("Resumes: Monday 06:00 UTC (11:30 IST) - London Session Open")
+            print("=" * 80 + "\n")
+            self.notifier.notify_trading_paused(
+                zone_title="Weekend Market Closed (Saturday & Sunday)",
+                reason="Forex & CFD markets closed for the weekend. All scanning and execution suspended.",
+                resume_time_str="Monday 06:00 UTC (11:30 IST) - London Session Open"
+            )
+
+        elif new_state == "PAUSED_TRAP_09":
             for s in self.symbols:
                 self.armed_states[s].is_armed = False
             print("\n" + "=" * 80)
@@ -1948,16 +2014,16 @@ class InstitutionalDCCBot:
             )
 
         elif new_state == "ACTIVE_LONDON":
-            if prev_state == "PAUSED_ASIAN":
+            if prev_state in ["PAUSED_ASIAN", "PAUSED_WEEKEND"]:
                 print("\n" + "=" * 80)
                 print("[=== TRADING RESUMED: LONDON SESSION OPEN (06:00 UTC / 11:30 IST) ===]")
                 print("Active Window: European / London Killzone Window")
-                print("Status:        Asian liquidity range established. Active market surveillance restored.")
+                print("Status:        Weekend closed / Asian range concluded. Active market surveillance restored.")
                 print("=" * 80 + "\n")
                 self.notifier.notify_trading_resumed(
                     zone_title="London Session Opened (06:00 UTC / 11:30 IST)",
                     session_name="European / London Killzone Window",
-                    details="Asian liquidity range established. Active market surveillance and trade execution restored."
+                    details="Weekend closed / Asian range concluded. Active market surveillance and trade execution restored."
                 )
             elif prev_state == "PAUSED_TRAP_09":
                 print("\n" + "=" * 80)
@@ -2008,17 +2074,18 @@ class InstitutionalDCCBot:
                 seconds_left_in_5m = 300.0 - seconds_into_5m
                 m_left = int(seconds_left_in_5m // 60)
                 s_left = int(seconds_left_in_5m % 60)
+                is_weekend = (now_utc.weekday() in [5, 6]) or (now_utc.weekday() == 4 and now_utc.hour >= self.entry_end_hour_utc)
 
-                # 0. Check daily rollover (00:00 UTC)
-                today = now_utc.date()
-                if self.current_trading_day != today:
-                    self.current_trading_day = today
+                # 0. Check daily rollover (00:00 UTC - skips Saturday & Sunday to preserve Friday trading day state)
+                active_trading_date = get_current_trading_day_start_utc(now_utc).date()
+                if self.current_trading_day != active_trading_date:
+                    self.current_trading_day = active_trading_date
                     account = mt5.account_info()
                     if account:
                         self.daily_starting_equity = account.equity
                     self.circuit_breaker_active = False
                     self.session_notified = {}
-                    print(f"\n[NEW TRADING DAY: {today}] Circuit Breaker Reset. Starting Equity Anchor: ${self.daily_starting_equity:,.2f}")
+                    print(f"\n[NEW TRADING DAY: {active_trading_date}] Circuit Breaker Reset. Starting Equity Anchor: ${self.daily_starting_equity:,.2f}")
 
                 # 1. Continuous Drawdown Surveillance (Two-Layer Circuit Breaker)
                 account = mt5.account_info()
@@ -2113,20 +2180,21 @@ class InstitutionalDCCBot:
                 # 4. Manage any active positions (Breakeven automator)
                 self.manage_active_positions()
 
-                # 5. Check for newly closed 5M bar on each symbol
-                for symbol in self.symbols:
-                    m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 2)
-                    if m5_rates is not None and len(m5_rates) >= 2:
-                        last_bar_t = m5_rates[-2]['time']
-                        if self.last_checked_bars[symbol] is None:
-                            self.last_checked_bars[symbol] = last_bar_t
-                            self.check_candle_arm_status(symbol)
-                        elif self.last_checked_bars[symbol] != last_bar_t:
-                            self.last_checked_bars[symbol] = last_bar_t
-                            self.check_candle_arm_status(symbol)
+                # 5. Check for newly closed 5M bar on each symbol (Market open only)
+                if not is_weekend:
+                    for symbol in self.symbols:
+                        m5_rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, 2)
+                        if m5_rates is not None and len(m5_rates) >= 2:
+                            last_bar_t = m5_rates[-2]['time']
+                            if self.last_checked_bars[symbol] is None:
+                                self.last_checked_bars[symbol] = last_bar_t
+                                self.check_candle_arm_status(symbol)
+                            elif self.last_checked_bars[symbol] != last_bar_t:
+                                self.last_checked_bars[symbol] = last_bar_t
+                                self.check_candle_arm_status(symbol)
 
                 # 6. Process Armed Candlestick Tick Streaming in last 2 minutes (Pre-Arm Mode only)
-                if self.entry_mode == "pre_arm":
+                if not is_weekend and self.entry_mode == "pre_arm":
                     for symbol in self.symbols:
                         state = self.armed_states[symbol]
                         if state.is_armed and seconds_left_in_5m <= 120.0:
@@ -2232,6 +2300,10 @@ class InstitutionalDCCBot:
                         ]
                         t.append(" | ", style="bright_black")
                         t.append(f"[POS: {', '.join(pos_items)}]", style="bold white on dark_green")
+                    elif is_weekend:
+                        day_name = now_utc.strftime('%A')
+                        t.append(" | ", style="bright_black")
+                        t.append(f"[WEEKEND ({day_name.upper()}) - MARKET CLOSED - RESUMES MON 06:00 UTC]", style="bold bright_yellow")
                     elif now_utc.hour < self.entry_start_hour_utc or now_utc.hour >= self.entry_end_hour_utc:
                         t.append(" | ", style="bright_black")
                         t.append("[ASIAN RANGE - ENTRIES PAUSED]", style="bold bright_black")
@@ -2240,7 +2312,7 @@ class InstitutionalDCCBot:
                         t.append("[TRAP HOUR - ENTRIES PAUSED]", style="bold bright_black")
 
                     self.live.update(t)
-                    pytime.sleep(0.5)
+                    pytime.sleep(1.0 if is_weekend else 0.5)
                 else:
                     pytime.sleep(0.05)
 
