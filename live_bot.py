@@ -13,6 +13,8 @@ Architecture:
 10. Broker Filling Mode Auto-Negotiation: Dynamically chooses FOK/IOC based on symbol specs
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
 from dataclasses import dataclass, field
@@ -23,7 +25,7 @@ import queue
 import sys
 import threading
 import time as pytime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import MetaTrader5 as mt5
 import numpy as np

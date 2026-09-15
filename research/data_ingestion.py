@@ -4,10 +4,14 @@ and partitions them into daily compressed Parquet files in data_cache/.
 Optimized for memory efficiency and high-speed tick replay.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import time
 from datetime import datetime
+from typing import Optional
+
 import pandas as pd
 import numpy as np
 
