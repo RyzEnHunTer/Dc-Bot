@@ -389,7 +389,23 @@ class LiveChartHandler(SimpleHTTPRequestHandler):
             self.send_json_response(state)
             return
 
-        # Route 3: TradingView Library JS
+        # Route 3: Nightly Audit Scorecard API
+        elif req_path == "/api/nightly_audit":
+            audit_file = os.path.join(PROJECT_ROOT, "reports", "daily_audits", "audit_reconciliation_latest.json")
+            if os.path.exists(audit_file):
+                try:
+                    with open(audit_file, "r", encoding="utf-8") as f:
+                        audit_data = json.load(f)
+                    self.send_json_response(audit_data)
+                    return
+                except Exception as e:
+                    self.send_json_response({"error": f"Failed reading audit file: {e}"}, status_code=500)
+                    return
+            else:
+                self.send_json_response({"status": "NO_AUDIT_AVAILABLE", "message": "No nightly audit report generated yet."})
+                return
+
+        # Route 4: TradingView Library JS
         elif req_path == "/lightweight-charts.standalone.production.js":
             if os.path.exists(JS_LIBRARY):
                 with open(JS_LIBRARY, "rb") as f:

@@ -571,6 +571,7 @@ class InstitutionalDCCBot:
         self.current_trading_day: Optional[datetime.date] = None
         self.daily_starting_equity: float = 0.0
         self.circuit_breaker_active: bool = False
+        self.nightly_audit_triggered_day: Optional[datetime.date] = None
 
         # Alpha weights for recursive float EMA updates
         self.alpha9 = 2.0 / (9.0 + 1.0)
@@ -2061,6 +2062,16 @@ class InstitutionalDCCBot:
                     details="US pre-market transition ended. Active market surveillance restored."
                 )
 
+    def _run_nightly_audit_async(self, audit_date: datetime.date):
+        """Executes nightly forensic tick backtest & reconciliation in a non-blocking background thread."""
+        try:
+            print(f"\n[NightlyReconciler] Session close reached ({self.entry_end_hour_utc}:05 UTC). Triggering automated nightly reconciliation...")
+            from nightly_reconciler import NightlyReconciler
+            reconciler = NightlyReconciler(symbols=self.symbols)
+            reconciler.run(audit_date)
+        except Exception as e:
+            print(f"[NightlyReconciler] Background audit error: {e}")
+
     def run(self):
         print("\n[InstitutionalDCCBot] Starting Live Monitoring Loop...")
         print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
@@ -2088,6 +2099,11 @@ class InstitutionalDCCBot:
                     self.circuit_breaker_active = False
                     self.session_notified = {}
                     print(f"\n[NEW TRADING DAY: {active_trading_date}] Circuit Breaker Reset. Starting Equity Anchor: ${self.daily_starting_equity:,.2f}")
+
+                # 0.1 Check automated session-close audit trigger (19:05 UTC / 00:35 IST)
+                if (now_utc.hour >= self.entry_end_hour_utc and now_utc.minute >= 5) and (self.nightly_audit_triggered_day != active_trading_date) and not is_weekend:
+                    self.nightly_audit_triggered_day = active_trading_date
+                    threading.Thread(target=self._run_nightly_audit_async, args=(active_trading_date,), daemon=True).start()
 
                 # 1. Continuous Drawdown Surveillance (Two-Layer Circuit Breaker)
                 account = mt5.account_info()

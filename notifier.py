@@ -252,6 +252,19 @@ class NotificationManager:
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
+    def notify_nightly_audit(self, title: str, summary_text: str, discord_fields: Optional[List[Dict]] = None):
+        """Dispatches nightly audit scorecard to Telegram/Discord."""
+        tg_text = f"<b>{title}</b>\n\n{summary_text}"
+        discord_embed = {
+            "title": title,
+            "description": summary_text,
+            "color": 0x9B59B6,
+            "fields": discord_fields or [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "footer": {"text": "DCC Nightly Audit & Reconciliation Engine"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
     def notify_trading_paused(self, zone_title: str, reason: str, resume_time_str: str, is_startup: bool = False):
         """Notifies when trading surveillance and execution are paused (Killzone Pause / Dead Trap Hour / Asian Range)."""
         now_str = format_dual_time(include_date=False)

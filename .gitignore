@@ -18,6 +18,8 @@ data_cache/
 
 # Backtest Reports & Historical Trade Logs
 reports/*.csv
+reports/daily_audits/*
+!reports/daily_audits/.gitkeep
 scratch/
 
 # Sensitive Account Configurations (Local MT5 Logins & Bot Tokens)
