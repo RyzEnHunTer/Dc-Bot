@@ -107,6 +107,15 @@ class StorageManager:
 
         # Method 1: Google Apps Script / Drive Webhook Endpoint
         webhook_url = cfg.get("google_drive_webhook_url", "").strip() or os.getenv("GDRIVE_WEBHOOK_URL", "").strip()
+        if not webhook_url:
+            for acc_cfg in cfg.values():
+                if isinstance(acc_cfg, dict):
+                    if "google_drive_webhook_url" in acc_cfg:
+                        webhook_url = acc_cfg["google_drive_webhook_url"].strip()
+                        break
+                    elif "storage" in acc_cfg and isinstance(acc_cfg["storage"], dict):
+                        webhook_url = acc_cfg["storage"].get("google_drive_webhook_url", "").strip()
+                        break
         if webhook_url:
             try:
                 with open(file_path, "rb") as f:

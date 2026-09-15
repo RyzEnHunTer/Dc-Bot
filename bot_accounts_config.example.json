@@ -20,6 +20,7 @@
       "telegram_bot_token": "",
       "telegram_chat_id": "",
       "discord_webhook_url": ""
-    }
+    },
+    "google_drive_webhook_url": "https://script.google.com/macros/s/YOUR_APPS_SCRIPT_ID/exec"
   }
 }
