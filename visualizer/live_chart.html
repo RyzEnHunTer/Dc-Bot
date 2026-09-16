@@ -318,6 +318,22 @@
       visibility: visible;
     }
 
+    /* TradingView Position Geometry Tool Canvas Overlay */
+    .trade-geometry-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 4;
+      mix-blend-mode: multiply;
+    }
+
+    [data-theme="dark"] .trade-geometry-canvas {
+      mix-blend-mode: screen;
+    }
+
     /* Dynamic Watermark / Indicator Legend */
     .chart-watermark {
       position: absolute;
@@ -943,7 +959,16 @@
         lineSl: '#d32f2f',
         lineTp1: '#00897b',
         lineTp2: '#00c853',
-        lineBe: '#00838f'
+        lineBe: '#00838f',
+        // Exact TradingView Position Geometry Tool Colors (from user screenshot):
+        geomProfitBg: 'rgba(160, 175, 200, 0.12)',   // Subtle translucent neutral grey tint (NOT 0.50!)
+        geomProfitBorder: 'rgba(140, 150, 170, 0.70)',
+        geomLossBg: 'rgba(242, 54, 69, 0.12)',       // Soft rose / pastel pink sampled from user TV screenshot
+        geomLossBorder: 'rgba(242, 54, 69, 0.65)',
+        geomEntryLine: '#363c4e',
+        geomEntryDashed: 'rgba(120, 123, 134, 0.50)',
+        geomBadgeBg: 'rgba(255, 255, 255, 0.95)',
+        geomBadgeText: '#131722'
       },
       dark: {
         bg: '#131722',
@@ -965,7 +990,16 @@
         lineSl: '#ef5350',
         lineTp1: '#26a69a',
         lineTp2: '#00e676',
-        lineBe: '#00e5ff'
+        lineBe: '#00e5ff',
+        // TradingView Dark Mode Position Geometry Tool Colors:
+        geomProfitBg: 'rgba(255, 255, 255, 0.09)',   // Translucent subtle silver/gray in dark mode
+        geomProfitBorder: 'rgba(255, 255, 255, 0.28)',
+        geomLossBg: 'rgba(242, 54, 69, 0.20)',       // Translucent pastel red/pink in dark mode
+        geomLossBorder: 'rgba(239, 83, 80, 0.80)',
+        geomEntryLine: '#ffffff',
+        geomEntryDashed: 'rgba(149, 152, 161, 0.50)',
+        geomBadgeBg: 'rgba(30, 34, 45, 0.92)',
+        geomBadgeText: '#ffffff'
       }
     };
 
@@ -1048,6 +1082,15 @@
         title: '1H EMA20'
       });
 
+      // Create HTML5 Canvas overlay for TradingView Geometry Tool
+      let geomCanvas = container.querySelector('.trade-geometry-canvas');
+      if (!geomCanvas) {
+        geomCanvas = document.createElement('canvas');
+        geomCanvas.className = 'trade-geometry-canvas';
+        geomCanvas.id = `geometry-canvas-${symbol}`;
+        container.appendChild(geomCanvas);
+      }
+
       symbolCharts[symbol] = {
         container,
         chart,
@@ -1059,12 +1102,18 @@
         priceLines: [],
         loaded: false,
         lastBars: [],
-        timeframeSeconds: 300
+        timeframeSeconds: 300,
+        activePos: null,
+        activeArmed: null
       };
 
-      // Real-time visible range and mouse move listeners for instantaneous countdown repositioning
+      // Real-time visible range and mouse move listeners for instantaneous countdown repositioning & geometry rendering
       chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
         if (symbol === currentSymbol) updateCountdown();
+        drawTradeGeometry(symbol);
+      });
+      chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+        drawTradeGeometry(symbol);
       });
       container.addEventListener('mousemove', () => {
         if (symbol === currentSymbol) updateCountdown();
@@ -1075,6 +1124,7 @@
         if (container.style.display !== 'none') {
           chart.resize(container.clientWidth, container.clientHeight);
           if (symbol === currentSymbol) updateCountdown();
+          drawTradeGeometry(symbol);
         }
       });
     }
@@ -1117,6 +1167,7 @@
         sc.ema20Series.applyOptions({ color: th.ema20 });
         sc.vwapSeries.applyOptions({ color: th.vwap });
         sc.h1e20Series.applyOptions({ color: th.h1e20 });
+        drawTradeGeometry(sym);
       });
     }
 
@@ -1124,11 +1175,307 @@
     function clearPriceLines(symbol) {
       const sc = symbolCharts[symbol];
       if (!sc) return;
-      sc.priceLines.forEach(l => sc.candleSeries.removePriceLine(l));
+      sc.priceLines.forEach(l => {
+        try { sc.candleSeries.removePriceLine(l); } catch(e) {}
+      });
       sc.priceLines = [];
     }
 
-    // Update Live Trade Geometry Lines
+    // Clear Trade Geometry Tool & Canvas Overlay
+    function clearTradeGeometry(symbol) {
+      clearPriceLines(symbol);
+      const sc = symbolCharts[symbol];
+      if (sc) {
+        sc.activePos = null;
+        sc.activeArmed = null;
+      }
+      const canvas = document.getElementById(`geometry-canvas-${symbol}`);
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    // TradingView Long/Short Position Geometry Tool Canvas Rendering Engine
+    function drawTradeGeometry(symbol) {
+      const sc = symbolCharts[symbol];
+      if (!sc) return;
+      const canvas = document.getElementById(`geometry-canvas-${symbol}`);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const width = sc.container.clientWidth;
+      const height = sc.container.clientHeight;
+      if (width === 0 || height === 0) return;
+
+      if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+      }
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, width, height);
+
+      const pos = sc.activePos;
+      const armed = sc.activeArmed;
+      const th = THEMES[currentTheme];
+
+      let isTrade = false;
+      let isBuy = false;
+      let entryPrice = 0;
+      let slPrice = 0;
+      let tp1Price = 0;
+      let tp2Price = 0;
+      let bePrice = 0;
+      let isArmedOnly = false;
+      let entryTime = 0;
+
+      if (pos && pos.active) {
+        isTrade = true;
+        isBuy = pos.direction === 'BUY';
+        entryPrice = pos.entry_price;
+        slPrice = pos.sl_price;
+        tp1Price = pos.tp1_price;
+        tp2Price = pos.tp2_price || tp1Price;
+        bePrice = (pos.runner_moved_to_be && pos.be_sl > 0) ? pos.be_sl : 0;
+        entryTime = pos.entry_time;
+      } else if (armed && armed.is_armed) {
+        const lastBar = (sc.lastBars && sc.lastBars.length > 0) ? sc.lastBars[sc.lastBars.length - 1] : null;
+        const curPrice = (armed.projected_entry && armed.projected_entry > 0) ? armed.projected_entry : (lastBar ? lastBar.close : 0);
+        if (curPrice > 0) {
+          isTrade = true;
+          isArmedOnly = true;
+          isBuy = armed.direction === 'BUY';
+          entryPrice = curPrice;
+          slPrice = isBuy ? (entryPrice - armed.sl_distance) : (entryPrice + armed.sl_distance);
+          tp1Price = isBuy ? (entryPrice + armed.tp1_distance) : (entryPrice - armed.tp1_distance);
+          tp2Price = isBuy ? (entryPrice + armed.tp2_distance) : (entryPrice - armed.tp2_distance);
+          entryTime = lastBar ? lastBar.time : 0;
+        }
+      }
+
+      if (!isTrade || entryPrice <= 0 || slPrice <= 0 || tp1Price <= 0) {
+        ctx.restore();
+        return;
+      }
+
+      // Convert prices to Y coordinates via LightweightCharts candle series
+      const yEntry = sc.candleSeries.priceToCoordinate(entryPrice);
+      const ySl = sc.candleSeries.priceToCoordinate(slPrice);
+      const yTp1 = sc.candleSeries.priceToCoordinate(tp1Price);
+      const yTp2 = (tp2Price && tp2Price > 0) ? sc.candleSeries.priceToCoordinate(tp2Price) : yTp1;
+      const yBe = bePrice > 0 ? sc.candleSeries.priceToCoordinate(bePrice) : null;
+
+      if (yEntry === null || ySl === null || yTp1 === null) {
+        ctx.restore();
+        return;
+      }
+
+      // Determine horizontal X coordinates
+      const barSpacing = sc.chart.timeScale().options().barSpacing || 9;
+      const lastBar = (sc.lastBars && sc.lastBars.length > 0) ? sc.lastBars[sc.lastBars.length - 1] : null;
+      const lastBarX = lastBar ? sc.chart.timeScale().timeToCoordinate(lastBar.time) : null;
+
+      let startX = null;
+      if (entryTime && entryTime > 0) {
+        startX = sc.chart.timeScale().timeToCoordinate(entryTime);
+      }
+
+      if (startX === null) {
+        if (lastBar && entryTime && sc.lastBars.length > 0 && entryTime < sc.lastBars[0].time) {
+          startX = 0; // Scrolled past visible left boundary
+        } else if (lastBarX !== null) {
+          startX = Math.max(0, lastBarX - barSpacing * 24);
+        } else {
+          startX = 30;
+        }
+      }
+      startX = Math.max(0, startX);
+
+      // Extend box into the future right space, exactly like TradingView (Image 1)
+      const priceScaleWidth = 62;
+      const maxRight = width - priceScaleWidth;
+      let endX;
+      if (lastBarX !== null) {
+        endX = Math.max(lastBarX + barSpacing * 16, startX + barSpacing * 26);
+      } else {
+        endX = startX + 220;
+      }
+      endX = Math.min(endX, maxRight - 10);
+      if (endX <= startX + 40) {
+        endX = Math.min(startX + 180, maxRight - 10);
+      }
+
+      const boxW = Math.max(30, endX - startX);
+
+      // TradingView Color Palette from User Screenshot
+      const profitBg = th.geomProfitBg;
+      const profitBorder = th.geomProfitBorder;
+      const lossBg = th.geomLossBg;
+      const lossBorder = th.geomLossBorder;
+      const entryLineColor = th.geomEntryLine;
+      const dashedColor = th.geomEntryDashed;
+
+      // Calculate box boundaries (on canvas, Y=0 is TOP / higher price, Y=height is BOTTOM / lower price)
+      let yProfitTop, yProfitBottom, yLossTop, yLossBottom;
+      const yPrimaryTp = (yTp2 !== null && !isNaN(yTp2)) ? yTp2 : yTp1;
+
+      if (isBuy) {
+        // Long Position: Profit is ABOVE entry (smaller Y), Loss is BELOW entry (larger Y)
+        yProfitTop = Math.min(yTp1, yPrimaryTp);
+        yProfitBottom = yEntry;
+        yLossTop = yEntry;
+        yLossBottom = ySl;
+      } else {
+        // Short Position: Profit is BELOW entry (larger Y), Loss is ABOVE entry (smaller Y)
+        yProfitTop = yEntry;
+        yProfitBottom = Math.max(yTp1, yPrimaryTp);
+        yLossTop = ySl;
+        yLossBottom = yEntry;
+      }
+
+      // 1. Draw Profit Area (Translucent Neutral Grey - User TradingView Screenshot)
+      const profitH = Math.max(0, yProfitBottom - yProfitTop);
+      ctx.fillStyle = profitBg;
+      ctx.fillRect(startX, yProfitTop, boxW, profitH);
+
+      ctx.strokeStyle = profitBorder;
+      ctx.lineWidth = 1.5;
+      if (isArmedOnly) ctx.setLineDash([4, 4]); else ctx.setLineDash([]);
+      ctx.strokeRect(startX, yProfitTop, boxW, profitH);
+
+      // If TP1 is distinct from TP2, draw subtle dashed TP1 target line inside profit box
+      if (yTp2 !== null && Math.abs(yTp1 - yTp2) > 5 && yTp1 > yProfitTop && yTp1 < yProfitBottom) {
+        ctx.beginPath();
+        ctx.strokeStyle = th.lineTp1 || '#26a69a';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(startX, yTp1);
+        ctx.lineTo(endX, yTp1);
+        ctx.stroke();
+      }
+
+      // 2. Draw Loss Area (Translucent Soft Pastel Pink / Rose - User TradingView Screenshot)
+      const lossH = Math.max(0, yLossBottom - yLossTop);
+      ctx.fillStyle = lossBg;
+      ctx.fillRect(startX, yLossTop, boxW, lossH);
+
+      ctx.strokeStyle = lossBorder;
+      ctx.lineWidth = 1.5;
+      if (isArmedOnly) ctx.setLineDash([4, 4]); else ctx.setLineDash([]);
+      ctx.strokeRect(startX, yLossTop, boxW, lossH);
+
+      // 3. Draw Entry Dividing Line
+      ctx.beginPath();
+      ctx.strokeStyle = entryLineColor;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.moveTo(startX, yEntry);
+      ctx.lineTo(endX, yEntry);
+      ctx.stroke();
+
+      // 4. Draw Breakeven Line if shifted
+      if (yBe !== null && yBe >= yProfitTop && yBe <= yProfitBottom) {
+        ctx.beginPath();
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.moveTo(startX, yBe);
+        ctx.lineTo(endX, yBe);
+        ctx.stroke();
+      }
+
+      // 5. Subtle Dashed Projection Lines from box right edge to price scale (TradingView style)
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+
+      // Target Projection
+      ctx.strokeStyle = isBuy ? profitBorder : lossBorder;
+      ctx.beginPath();
+      ctx.moveTo(endX, yProfitTop);
+      ctx.lineTo(maxRight, yProfitTop);
+      ctx.stroke();
+
+      // Entry Projection
+      ctx.strokeStyle = dashedColor;
+      ctx.beginPath();
+      ctx.moveTo(endX, yEntry);
+      ctx.lineTo(maxRight, yEntry);
+      ctx.stroke();
+
+      // Stop Loss Projection
+      ctx.strokeStyle = isBuy ? lossBorder : profitBorder;
+      ctx.beginPath();
+      ctx.moveTo(endX, yLossBottom);
+      ctx.lineTo(maxRight, yLossBottom);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+
+      // 6. In-Box TradingView Metrics & Badges
+      const riskDist = Math.abs(entryPrice - slPrice);
+      const targetRef = tp2Price || tp1Price;
+      const rewardDist = Math.abs(targetRef - entryPrice);
+      const rrRatio = riskDist > 0 ? (rewardDist / riskDist).toFixed(2) : '2.00';
+
+      // Center Info Pill on Entry Line
+      const pillW = 95;
+      const pillH = 20;
+      const pillX = startX + 12;
+      const pillY = yEntry - 10;
+
+      ctx.fillStyle = th.geomBadgeBg;
+      ctx.strokeStyle = entryLineColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(pillX, pillY, pillW, pillH, 4);
+      } else {
+        ctx.rect(pillX, pillY, pillW, pillH);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = th.geomBadgeText;
+      ctx.font = "bold 10px 'JetBrains Mono', monospace";
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const dirLabel = isBuy ? 'LONG' : 'SHORT';
+      ctx.fillText(`${dirLabel} 1:${rrRatio}`, pillX + pillW / 2, pillY + pillH / 2);
+
+      // Top Target Label inside Profit Box
+      ctx.fillStyle = currentTheme === 'light' ? '#434651' : '#d1d4dc';
+      ctx.font = "600 10px 'Inter', sans-serif";
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const tpText = tp2Price ? `Target 2: ${tp2Price.toFixed(2)} (+2.0R)` : `Target: ${tp1Price.toFixed(2)} (+1.5R)`;
+      ctx.fillText(tpText, startX + 10, yProfitTop + 5);
+
+      // Bottom Stop Loss Label inside Loss Box
+      ctx.fillStyle = currentTheme === 'light' ? '#d32f2f' : '#ef5350';
+      ctx.font = "600 10px 'Inter', sans-serif";
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`Stop Loss: ${slPrice.toFixed(2)} (-1.0R)`, startX + 10, yLossBottom - 5);
+
+      // Breakeven Label if runner protected
+      if (yBe !== null) {
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = "bold 9px 'JetBrains Mono', monospace";
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`🛡️ BREAKEVEN (${bePrice.toFixed(2)})`, endX - 8, yBe - 3);
+      }
+
+      ctx.restore();
+    }
+
+    // Update Live Trade Geometry Lines & Canvas Box
     function updateTradeGeometry(symbol, pos, armed) {
       clearPriceLines(symbol);
       const sc = symbolCharts[symbol];
@@ -1144,6 +1491,9 @@
       const cardPnl = document.getElementById('card-pnl');
 
       if (pos && pos.active) {
+        sc.activePos = pos;
+        sc.activeArmed = null;
+
         const isBuy = pos.direction === "BUY";
         badge.className = `trade-status-badge ${isBuy ? 'badge-buy' : 'badge-sell'}`;
         badge.innerText = `${pos.direction} ACTIVE (#${pos.ticket_b || pos.ticket_a})`;
@@ -1170,12 +1520,12 @@
           }]);
         }
 
-        // Add Active Trade Horizontal Lines on Chart
+        // Add subtle projection lines for the right price scale labels (without obscuring chart body)
         sc.priceLines.push(sc.candleSeries.createPriceLine({
           price: pos.entry_price,
           color: th.lineEntry,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Solid,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.SparseDotted,
           axisLabelVisible: true,
           title: `ENTRY (${pos.direction}: ${pos.entry_price.toFixed(2)})`
         }));
@@ -1183,8 +1533,8 @@
         sc.priceLines.push(sc.candleSeries.createPriceLine({
           price: pos.sl_price,
           color: th.lineSl,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.SparseDotted,
           axisLabelVisible: true,
           title: `STOP LOSS (-1.0R: ${pos.sl_price.toFixed(2)})`
         }));
@@ -1192,32 +1542,40 @@
         sc.priceLines.push(sc.candleSeries.createPriceLine({
           price: pos.tp1_price,
           color: th.lineTp1,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.SparseDotted,
           axisLabelVisible: true,
           title: `TARGET 1 (+1.5R: ${pos.tp1_price.toFixed(2)})`
         }));
 
-        sc.priceLines.push(sc.candleSeries.createPriceLine({
-          price: pos.tp2_price,
-          color: th.lineTp2,
-          lineWidth: 2,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `TARGET 2 (+2.0R: ${pos.tp2_price.toFixed(2)})`
-        }));
+        if (pos.tp2_price && Math.abs(pos.tp2_price - pos.tp1_price) > 0.05) {
+          sc.priceLines.push(sc.candleSeries.createPriceLine({
+            price: pos.tp2_price,
+            color: th.lineTp2,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
+            axisLabelVisible: true,
+            title: `TARGET 2 (+2.0R: ${pos.tp2_price.toFixed(2)})`
+          }));
+        }
 
         if (pos.runner_moved_to_be && pos.be_sl > 0) {
           sc.priceLines.push(sc.candleSeries.createPriceLine({
             price: pos.be_sl,
             color: th.lineBe,
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Solid,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: `BREAKEVEN STOP (${pos.be_sl.toFixed(2)})`
+            title: `BREAKEVEN (${pos.be_sl.toFixed(2)})`
           }));
         }
+
+        // Render the TradingView Position Box
+        drawTradeGeometry(symbol);
       } else if (armed && armed.is_armed) {
+        sc.activePos = null;
+        sc.activeArmed = armed;
+
         const isBuy = armed.direction === "BUY";
         badge.className = "trade-status-badge badge-armed";
         badge.innerText = `ARMED ${armed.direction}`;
@@ -1255,8 +1613,8 @@
           sc.priceLines.push(sc.candleSeries.createPriceLine({
             price: estEntry,
             color: '#ffb300',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
             axisLabelVisible: true,
             title: `PREDICTED ENTRY (${armed.direction}: ~${estEntry.toFixed(2)})`
           }));
@@ -1264,8 +1622,8 @@
           sc.priceLines.push(sc.candleSeries.createPriceLine({
             price: estSl,
             color: '#ef5350',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
             axisLabelVisible: true,
             title: `PREDICTED SL (-1.0R: ${estSl.toFixed(2)})`
           }));
@@ -1273,8 +1631,8 @@
           sc.priceLines.push(sc.candleSeries.createPriceLine({
             price: estTp1,
             color: '#26a69a',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
             axisLabelVisible: true,
             title: `PREDICTED TP1 (+1.5R: ${estTp1.toFixed(2)})`
           }));
@@ -1282,11 +1640,13 @@
           sc.priceLines.push(sc.candleSeries.createPriceLine({
             price: estTp2,
             color: '#00e676',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.SparseDotted,
             axisLabelVisible: true,
             title: `PREDICTED TP2 (+2.0R: ${estTp2.toFixed(2)})`
           }));
+
+          drawTradeGeometry(symbol);
         } else {
           cardEntry.innerText = "AT BAR CLOSE";
           cardSl.innerText = `-${armed.sl_distance.toFixed(1)} pts`;
@@ -1295,8 +1655,10 @@
           cardBe.innerText = "PENDING ENTRY";
           cardPnl.innerText = "$0.00";
           cardPnl.className = "metric-val";
+          drawTradeGeometry(symbol);
         }
       } else {
+        clearTradeGeometry(symbol);
         sc.candleSeries.setMarkers([]);
         badge.className = "trade-status-badge badge-idle";
         badge.innerText = "NO POSITION";
@@ -1359,6 +1721,7 @@
         if (symbol === currentSymbol) {
           updateWatermarkAndLegend(data.bars);
           updateCountdown();
+          drawTradeGeometry(symbol);
         }
       } catch (err) {
         console.error(`Error loading candles for ${symbol}:`, err);
@@ -1476,6 +1839,7 @@
 
       updateWatermarkAndLegend();
       pollState();
+      drawTradeGeometry(currentSymbol);
     }
 
     // Switch Timeframe (1M, 5M, 15M, 30M, 1H)

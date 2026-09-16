@@ -624,6 +624,40 @@ class NightlyReconciler:
         else:
             print(f"[Storage] VPS disk clean. All reports within 7-day rolling retention.")
 
+        # 5. Deep Winning & Losing Trade Forensics Engine
+        print(f"[*] Executing Deep Trade Forensics & Executive Briefing...")
+        discord_fields = []
+        try:
+            from experiments.trade_forensics.analyze import analyze_session_date
+            forensics_data = analyze_session_date(target_date, upload_to_drive=True)
+            if forensics_data:
+                verdicts = forensics_data.get("verdicts", [])
+                win_v = [v for v in verdicts if "WIN" in v.outcome or "WIN" in v.primary_verdict or v.metrics_summary.get("PnL ($)", 0.0) > 0.05]
+                loss_v = [v for v in verdicts if v not in win_v]
+
+                if win_v:
+                    top_win = win_v[0]
+                    discord_fields.append({
+                        "name": f"🏆 Top Winning Edge: {top_win.symbol} {top_win.direction}",
+                        "value": f"**{top_win.verdict_title}**\n• PnL: ${top_win.metrics_summary.get('PnL ($)', 0):+,.2f} ({top_win.metrics_summary.get('PnL (R)', 0)}R)\n• MFE: {top_win.metrics_summary.get('MFE', '0R')} | MAE: {top_win.metrics_summary.get('MAE', '0R')}\n• Edge: {top_win.root_cause[:180]}...",
+                        "inline": False
+                    })
+                if loss_v:
+                    top_loss = loss_v[0]
+                    discord_fields.append({
+                        "name": f"⚠️ Primary Loss Autopsy: {top_loss.symbol} {top_loss.direction}",
+                        "value": f"**{top_loss.verdict_title}**\n• PnL: ${top_loss.metrics_summary.get('PnL ($)', 0):+,.2f}\n• Root Cause: {top_loss.root_cause[:180]}...",
+                        "inline": False
+                    })
+
+                discord_fields.append({
+                    "name": "☁️ Google Drive Archive",
+                    "value": f"Full forensic HTML dashboard, JSON autopsy & AI executive briefing saved under `bot backtest/{target_subfolder}/`.",
+                    "inline": False
+                })
+        except Exception as e:
+            print(f"[NightlyReconciler] Warning: Forensics analysis failed: {e}")
+
         # Dispatch Notification
         s = audit_result["summary"]
         alert_text = (
@@ -635,11 +669,12 @@ class NightlyReconciler:
             f"• <b>Discrepancies:</b> {s['discrepancies']}\n"
             f"• <b>Backtest PnL:</b> ${s['backtest_net_pnl']:,.2f}\n"
             f"• <b>Live Broker PnL:</b> ${s['live_broker_net_pnl']:,.2f}\n\n"
-            f"<i>Detailed forensic JSON saved to VPS & Web Dashboard.</i>"
+            f"<i>Detailed forensic JSON & HTML Dashboard saved to Google Drive under 'bot backtest/{target_subfolder}/'.</i>"
         )
         self.notifier.notify_nightly_audit(
             title=f"🌙 DCC Nightly Audit Scorecard ({target_date})",
-            summary_text=alert_text
+            summary_text=alert_text,
+            discord_fields=discord_fields
         )
 
         # Print Scorecard to Console
