@@ -11,13 +11,15 @@ Constraints & Architecture:
 - Zero External Dependencies: Uses standard library urllib.request.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import queue
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.parse
 import urllib.request
