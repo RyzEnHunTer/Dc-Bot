@@ -1,8 +1,8 @@
 # DCC Institutional Trading System — Production Lock Specification
 
-## Status: LOCKED & FROZEN FOR PRODUCTION (v1.2.0-ApexHunter)
+## Status: LOCKED & FROZEN FOR PRODUCTION (v1.1.0-TripleGuard)
 **Release Date:** September 20, 2026  
-**Active Production Architecture:** DCC v1.2 ApexHunter Dual-Gear Engine  
+**Active Production Architecture:** DCC v1.1 Early ApexHunter Engine (TripleGuard + Daily Killzone Paused)  
 **Verification Status:** 100% PASS (35/35 Unit Tests Verified, Zero Prop Firm Breaches)  
 
 ---

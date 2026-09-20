@@ -3193,7 +3193,7 @@ def main():
     parser.add_argument("--no-news-shield", action="store_true", default=False, help="Disable Forex Factory high-impact news blackout shield")
     parser.add_argument("--no-ema-gap-filter", action="store_true", default=False, help="Deprecated: EMA gap filter is permanently nuked in v1.2")
     parser.add_argument("--entry-mode", choices=["pre_arm", "bar_close"], default=None, help="Entry mode: pre_arm (tick stream) or bar_close (instant flip)")
-    parser.add_argument("--strategy-version", choices=["v1.0", "v1.1", "v1.2"], default=os.getenv("DCC_VERSION", "v1.2"), help="Strategy version: v1.0 (Baseline), v1.1 (Early ApexHunter), or v1.2 (ApexHunter Flagship)")
+    parser.add_argument("--strategy-version", choices=["v1.0", "v1.1", "v1.2"], default=os.getenv("DCC_VERSION", "v1.1"), help="Strategy version: v1.0 (Baseline), v1.1 (Early ApexHunter), or v1.2 (ApexHunter Flagship)")
     args = parser.parse_args()
 
     if not mt5.initialize():

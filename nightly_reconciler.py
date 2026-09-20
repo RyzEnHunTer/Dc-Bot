@@ -247,7 +247,7 @@ class NightlyReconciler:
         self,
         symbols: Optional[List[str]] = None,
         retention_days: int = 7,
-        strategy_version: str = "v1.2",
+        strategy_version: str = "v1.1",
     ):
         self.symbols = symbols or ["XAUUSD", "NAS100"]
         self.strategy_version = strategy_version
