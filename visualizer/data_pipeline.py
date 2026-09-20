@@ -122,11 +122,21 @@ def parse_trades(csv_path: str, candles_dict: Optional[Dict] = None) -> List[Dic
         print(f"[Warn] Trade log {csv_path} not found.")
         return []
 
+    def safe_float(val, default=0.0):
+        """Safely convert a value to float, returning default if NaN/None."""
+        try:
+            if pd.isna(val):
+                return default
+            return float(val)
+        except (ValueError, TypeError):
+            return default
+
     df = pd.read_csv(csv_path)
     trades = []
 
     for idx, row in df.iterrows():
-        trade_id = int(row.get('trade_id', idx + 1))
+        raw_tid = row.get('trade_id', idx + 1)
+        trade_id = int(raw_tid) if pd.notna(raw_tid) else idx + 1
         symbol = str(row['symbol']).strip()
         direction = str(row['direction']).strip().upper()
         
@@ -167,7 +177,7 @@ def parse_trades(csv_path: str, candles_dict: Optional[Dict] = None) -> List[Dic
         exit_time_utc = exit_dt.strftime("%Y-%m-%d %H:%M UTC")
         exit_time_ist = exit_ist.strftime("%H:%M IST")
         
-        actual_entry = float(row.get('actual_entry', row.get('entry_price', 0.0)))
+        actual_entry = safe_float(row.get('actual_entry', row.get('entry_price', 0.0)))
         
         # Exact strategy parameters
         if symbol == "XAUUSD":
@@ -181,7 +191,7 @@ def parse_trades(csv_path: str, candles_dict: Optional[Dict] = None) -> List[Dic
             tp2_rr = 2.0
             digits = 1
 
-        atr = float(row.get('atr_1h', row.get('sl_dist', 1.0) / sl_multiplier))
+        atr = safe_float(row.get('atr_1h'), safe_float(row.get('sl_dist', 1.0)) / sl_multiplier)
 
         if 'sl_price' in row and not pd.isna(row['sl_price']):
             sl_price = round(float(row['sl_price']), digits)
@@ -203,7 +213,7 @@ def parse_trades(csv_path: str, candles_dict: Optional[Dict] = None) -> List[Dic
                 tp1_price = round(actual_entry - tp1_distance, digits)
                 tp2_price = round(actual_entry - tp2_distance, digits)
 
-        spread = float(row.get('entry_spread', 0.0))
+        spread = safe_float(row.get('entry_spread', 0.0))
         be_price = round(actual_entry + spread if direction == "BUY" else actual_entry - spread, digits)
 
         tp1_hit = bool(row.get('tp1_hit', False))
@@ -211,18 +221,18 @@ def parse_trades(csv_path: str, candles_dict: Optional[Dict] = None) -> List[Dic
         be_hit = bool(row.get('be_hit', False))
         exit_reason = str(row.get('exit_reason', 'UNKNOWN'))
         
-        net_pnl = round(float(row.get('net_pnl', 0.0)), 2)
-        total_lots = round(float(row.get('total_lots', 0.01)), 2)
-        partial_lots = round(float(row.get('partial_lots', row.get('part_lots', 0.01))), 2)
-        runner_lots = round(float(row.get('runner_lots', row.get('run_lots', 0.01))), 2)
-        duration_m = float(row.get('duration_m', 0.0))
+        net_pnl = round(safe_float(row.get('net_pnl', 0.0)), 2)
+        total_lots = round(safe_float(row.get('total_lots', 0.01), 0.01), 2)
+        partial_lots = round(safe_float(row.get('partial_lots', row.get('part_lots', 0.01)), 0.01), 2)
+        runner_lots = round(safe_float(row.get('runner_lots', row.get('run_lots', 0.01)), 0.01), 2)
+        duration_m = safe_float(row.get('duration_m', 0.0))
         duration_str = format_duration(duration_m)
-        balance = round(float(row.get('balance', row.get('account_balance', row.get('ending_balance', 5000.0)))), 2)
+        balance = round(safe_float(row.get('balance', row.get('account_balance', row.get('ending_balance', 5000.0))), 5000.0), 2)
 
         if 'return_pct' in row and not pd.isna(row['return_pct']):
             return_pct = round(float(row['return_pct']), 2)
         else:
-            starting_bal = float(row.get('starting_balance', 5000.0))
+            starting_bal = safe_float(row.get('starting_balance', 5000.0), 5000.0)
             return_pct = round((net_pnl / starting_bal) * 100.0, 2) if starting_bal > 0 else 0.0
 
         # Build narrative log for inspector panel
