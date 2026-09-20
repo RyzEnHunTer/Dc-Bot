@@ -514,7 +514,7 @@ def main():
         "symbols": ["XAUUSD", "NAS100"],
         "candles": candles,
         "strategies": strategies,
-        "default_strategy": "chained_official" if "chained_official" in strategies else list(strategies.keys())[0]
+        "default_strategy": "apexhunter_official" if "apexhunter_official" in strategies else ("chained_official" if "chained_official" in strategies else list(strategies.keys())[0])
     }
 
     print(f"\nWriting visualizer payload to {OUTPUT_JSON}...")

@@ -1473,7 +1473,7 @@
     // Initialize Application
     async function init() {
       try {
-        const res = await fetch('data.json');
+        const res = await fetch('data.json?v=1.2');
         if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
         payload = await res.json();
         
@@ -1530,7 +1530,9 @@
       select.innerHTML = '';
 
       const publicNames = {
+        'apexhunter_official': 'DCC v1.2 ApexHunter Flagship (Jan - Sep 2026)',
         'chained_official': 'DCC Institutional Flagship (Jan - Sep 2026)',
+        'chained_official_no_eod': 'DCC Continuous Holding (No EOD Close)',
         'phase2_official': 'DCC Institutional Flagship (Phase 2: Jul - Sep 2026)',
         'phase1_official': 'DCC Institutional Flagship (Phase 1: Jan - Jun 2026)',
         'phase2_no_sweep': 'DCC Momentum Portfolio (Phase 2)',

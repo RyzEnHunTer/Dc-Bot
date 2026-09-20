@@ -90,7 +90,7 @@ def is_vercel_logged_in(npx_cmd):
     """Check if the user is already authenticated with Vercel."""
     try:
         res = subprocess.run(
-            [npx_cmd, "vercel", "whoami"],
+            [npx_cmd, "-y", "vercel", "whoami"],
             capture_output=True,
             text=True,
             shell=True
@@ -107,7 +107,7 @@ def login_vercel(npx_cmd):
     print("   Your browser will open automatically to complete the verification.")
     print("-" * 78 + "\n")
     
-    cmd = f'"{npx_cmd}" vercel login'
+    cmd = f'"{npx_cmd}" -y vercel login'
     return subprocess.call(cmd, cwd=str(VISUALIZER_DIR), shell=True) == 0
 
 def deploy_to_vercel(temporary=False):
@@ -142,9 +142,9 @@ def deploy_to_vercel(temporary=False):
 
     # Command to run inside VISUALIZER_DIR
     if temporary:
-        cmd = f'"{npx_cmd}" vercel deploy --temporary'
+        cmd = f'"{npx_cmd}" -y vercel deploy --temporary'
     else:
-        cmd = f'"{npx_cmd}" vercel --prod'
+        cmd = f'"{npx_cmd}" -y vercel --prod'
     
     try:
         returncode = subprocess.call(cmd, cwd=str(VISUALIZER_DIR), shell=True)
