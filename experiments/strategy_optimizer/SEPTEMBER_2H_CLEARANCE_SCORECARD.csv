@@ -1,0 +1,6 @@
+Candidate,Total Trades,Win Rate,Net Profit,Profit Factor,Max Drawdown,Worst Day
+Baseline (Locked),39,59.0%,"+$1,079.72",2.13,4.68%,-$174.11
+Variant 1: 1H Stretch Guard ONLY,33,63.6%,"+$1,072.78",2.53,3.63%,-$171.44
+Variant 2: 2H Clearance Rule ONLY (>= 1.0R),27,63.0%,+$936.04,2.58,3.26%,-$111.41
+Variant 3: 1H Stretch + 2H Clearance COMBINED,23,65.2%,+$799.08,2.69,3.24%,-$123.34
+Variant 4: Triple Shield (+ ADX <= 45),22,68.2%,+$865.33,3.08,3.24%,-$124.74

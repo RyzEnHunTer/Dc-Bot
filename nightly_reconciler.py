@@ -247,11 +247,27 @@ class NightlyReconciler:
         self,
         symbols: Optional[List[str]] = None,
         retention_days: int = 7,
+        strategy_version: str = "v1.2",
     ):
         self.symbols = symbols or ["XAUUSD", "NAS100"]
+        self.strategy_version = strategy_version
         self.news_engine = NewsEngine()
         self.storage = StorageManager(retention_days=retention_days)
         self.notifier = NotificationManager()
+        self.broker_offset = self.detect_broker_offset()
+
+    def detect_broker_offset(self) -> timedelta:
+        """Detects MT5 broker server timezone offset relative to UTC."""
+        try:
+            sample_sym = self.symbols[0]
+            tick = mt5.symbol_info_tick(sample_sym)
+            if tick and tick.time > 0:
+                s_time = datetime.fromtimestamp(tick.time, timezone.utc)
+                offset_hrs = round((s_time - datetime.now(timezone.utc)).total_seconds() / 3600.0)
+                return timedelta(hours=offset_hrs)
+        except Exception:
+            pass
+        return timedelta(hours=3)
 
     def get_symbol_specs(self, symbol: str) -> Dict[str, Any]:
         info = mt5.symbol_info(symbol)
@@ -267,11 +283,13 @@ class NightlyReconciler:
         }
 
     def fetch_live_deals(self, target_date: datetime.date) -> List[Dict[str, Any]]:
-        """Queries MT5 history deals for target date."""
+        """Queries MT5 history deals for target date with True UTC conversion."""
         utc_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=timezone.utc)
         utc_end = utc_start + timedelta(days=1)
+        broker_start = utc_start + self.broker_offset
+        broker_end = utc_end + self.broker_offset
 
-        deals = mt5.history_deals_get(utc_start, utc_end)
+        deals = mt5.history_deals_get(broker_start, broker_end)
         if not deals:
             return []
 
@@ -279,12 +297,14 @@ class NightlyReconciler:
         for d in deals:
             # Filter out non-trade entries (deal types: 0=BUY, 1=SELL)
             if d.entry in (0, 1):  # 0=ENTRY_IN, 1=ENTRY_OUT
+                deal_utc = datetime.fromtimestamp(d.time, tz=timezone.utc) - self.broker_offset
                 parsed_deals.append({
                     "ticket": d.ticket,
                     "order": d.order,
+                    "position_id": getattr(d, "position_id", d.order),
                     "symbol": d.symbol,
-                    "time": datetime.fromtimestamp(d.time, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                    "time_posix": d.time,
+                    "time": deal_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                    "time_posix": d.time - int(self.broker_offset.total_seconds()),
                     "type": "BUY" if d.type == 0 else "SELL",
                     "entry_type": "ENTRY_IN" if d.entry == 0 else "ENTRY_OUT",
                     "volume": round(d.volume, 2),
@@ -295,7 +315,7 @@ class NightlyReconciler:
         return parsed_deals
 
     def run_daily_backtest(self, target_date: datetime.date) -> List[Dict[str, Any]]:
-        """Replays all broker ticks for target_date across configured symbols."""
+        """Replays all broker ticks for target_date across configured symbols in True UTC."""
         utc_start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=timezone.utc)
         utc_end = utc_start + timedelta(days=1)
         session_start = utc_start.replace(hour=6)
@@ -307,41 +327,41 @@ class NightlyReconciler:
             cfg = CONFIGS.get(sym, CONFIGS["XAUUSD"])
             specs = self.get_symbol_specs(sym)
 
-            # 1. Multi-timeframe rates with warmup
+            # 1. Multi-timeframe rates with warmup queried in broker time, shifted to True UTC
             warmup_start = utc_start - timedelta(days=5)
-            r_m5 = mt5.copy_rates_range(sym, mt5.TIMEFRAME_M5, warmup_start, utc_end)
-            r_1h = mt5.copy_rates_range(sym, mt5.TIMEFRAME_H1, warmup_start, utc_end)
-            r_2h = mt5.copy_rates_range(sym, mt5.TIMEFRAME_H2, warmup_start, utc_end)
+            r_m5 = mt5.copy_rates_range(sym, mt5.TIMEFRAME_M5, warmup_start + self.broker_offset, utc_end + self.broker_offset)
+            r_1h = mt5.copy_rates_range(sym, mt5.TIMEFRAME_H1, warmup_start + self.broker_offset, utc_end + self.broker_offset)
+            r_2h = mt5.copy_rates_range(sym, mt5.TIMEFRAME_H2, warmup_start + self.broker_offset, utc_end + self.broker_offset)
 
             if r_m5 is None or r_1h is None or len(r_m5) < 30:
                 print(f"[{sym}] Insufficient rates for {target_date}, skipping.")
                 continue
 
             df_m5 = pd.DataFrame(r_m5)
-            df_m5['time'] = pd.to_datetime(df_m5['time'], unit='s', utc=True)
+            df_m5['time'] = pd.to_datetime(df_m5['time'], unit='s', utc=True) - self.broker_offset
             df_m5.set_index('time', inplace=True)
             df_m5.rename(columns={'tick_volume': 'volume'}, inplace=True)
 
             df_1h = pd.DataFrame(r_1h)
-            df_1h['time'] = pd.to_datetime(df_1h['time'], unit='s', utc=True)
+            df_1h['time'] = pd.to_datetime(df_1h['time'], unit='s', utc=True) - self.broker_offset
             df_1h.set_index('time', inplace=True)
 
             df_2h = pd.DataFrame(r_2h)
-            df_2h['time'] = pd.to_datetime(df_2h['time'], unit='s', utc=True)
+            df_2h['time'] = pd.to_datetime(df_2h['time'], unit='s', utc=True) - self.broker_offset
             df_2h.set_index('time', inplace=True)
 
             engine = DCCEngine(atr_sl_multiplier=cfg.atr_sl_multiplier, risk_reward_ratio=cfg.tp1_rr)
             df_prep = engine.prepare_data(df_m5, df_1h, df_2h)
             df_prep['vwap_5m'] = compute_session_vwap(df_m5)
 
-            # 2. Fetch raw broker ticks for the session
-            raw_ticks = mt5.copy_ticks_range(sym, session_start, session_end, mt5.COPY_TICKS_ALL)
+            # 2. Fetch raw broker ticks for the session queried in broker time, shifted to True UTC
+            raw_ticks = mt5.copy_ticks_range(sym, session_start + self.broker_offset, session_end + self.broker_offset, mt5.COPY_TICKS_ALL)
             if raw_ticks is None or len(raw_ticks) == 0:
                 print(f"[{sym}] No broker ticks found for {target_date}.")
                 continue
 
             ticks_df = pd.DataFrame(raw_ticks)
-            ticks_df['time_dt'] = pd.to_datetime(ticks_df['time_msc'], unit='ms', utc=True)
+            ticks_df['time_dt'] = pd.to_datetime(ticks_df['time_msc'], unit='ms', utc=True) - self.broker_offset
             ticks_df = ticks_df[(ticks_df['bid'] > 0) & (ticks_df['ask'] > 0) & (ticks_df['ask'] >= ticks_df['bid'])]
 
             # Evaluate 5M bars inside session
@@ -355,10 +375,32 @@ class NightlyReconciler:
                 bar_time = session_bars.index[i]
                 t_hour = bar_time.hour
 
-                # Trap hour check
-                if t_hour in (9, 13):
-                    i += 1
-                    continue
+                # Strategy-specific session & killzone filters
+                strat_ver = getattr(self, "strategy_version", "v1.2")
+                if strat_ver == "v1.2":
+                    # v1.2 ApexHunter Flagship: Monday PM Block (16:00 UTC and later)
+                    if bar_time.weekday() == 0 and t_hour >= 16:
+                        i += 1
+                        continue
+
+                    # ApexHunter Smart Killzone Check (Hours 09:00 & 13:00 UTC require stretch >= 1.10x ATR)
+                    if t_hour in (9, 13):
+                        h1_e20_temp = float(bar['ema20_1h']) if not pd.isna(bar['ema20_1h']) else 0.0
+                        close_p_temp = float(bar['close'])
+                        atr_temp = float(bar['atr_1h']) if not pd.isna(bar['atr_1h']) else 1.0
+                        stretch_r = abs(close_p_temp - h1_e20_temp) / (atr_temp + 1e-9)
+                        if stretch_r < 1.10:
+                            i += 1
+                            continue
+                elif strat_ver == "v1.1":
+                    # v1.1 Early ApexHunter: Monday PM Block + Hard Killzone Pause
+                    if bar_time.weekday() == 0 and t_hour >= 16:
+                        i += 1
+                        continue
+                    if t_hour in (9, 13):
+                        i += 1
+                        continue
+                # v1.0 Baseline DCC: No Monday PM block, No killzone pause
 
                 # News shield check
                 if self.news_engine.get_active_news_shield(bar_time):
@@ -381,12 +423,27 @@ class NightlyReconciler:
 
                 prev_diff = float(prev_bar['ema9_5m']) - float(prev_bar['ema20_5m'])
                 curr_diff = m5_e9 - m5_e20
-                ema_gap = abs(m5_e9 - m5_e20)
 
-                # EMA Gap Filter
-                if ema_gap > (0.35 * atr):
-                    i += 1
-                    continue
+                if strat_ver in ("v1.1", "v1.2"):
+                    # TripleGuard Policies (Active in v1.1 Early ApexHunter and v1.2 ApexHunter Flagship)
+                    # Anti-Chop Floor Filter: |curr_diff| >= 0.02 * atr
+                    if abs(curr_diff) < (0.02 * atr):
+                        i += 1
+                        continue
+                    # Blow-off Top Filter: 1H ADX <= 45.0
+                    if adx > 45.0:
+                        i += 1
+                        continue
+                    # No-Chase Exhaustion Ceiling: |close_p - h1_e20| <= 1.80 * atr
+                    if abs(close_p - h1_e20) > (1.80 * atr):
+                        i += 1
+                        continue
+                else:
+                    # v1.0 Baseline DCC: Legacy EMA Gap Filter
+                    ema_gap = abs(m5_e9 - m5_e20)
+                    if ema_gap > (0.35 * atr):
+                        i += 1
+                        continue
 
                 sig_direction = 0
                 if bias == 1 and prev_diff <= 0 and curr_diff > 0 and close_p > vwap and close_p > h1_e20:
@@ -451,38 +508,81 @@ class NightlyReconciler:
         Reconciles backtest setups against live MT5 broker deals.
         Categorizes: MATCHED_SUCCESS, BLOCKED_BY_CUSHION, MISSED_DOWNTIME_BUG, UNEXPECTED_LIVE_DEAL.
         """
-        # Group live deals into entry trades (ENTRY_IN)
-        live_entries = [d for d in live_deals if d["entry_type"] == "ENTRY_IN"]
+        # Group raw ENTRY_IN live deals into cohesive trade setups (twin tickets: partial + runner)
+        raw_live_entries = [d for d in live_deals if d["entry_type"] == "ENTRY_IN"]
+        exit_deals = [d for d in live_deals if d["entry_type"] == "ENTRY_OUT"]
+        
+        grouped_setups = []
+        for d in raw_live_entries:
+            d_time = pd.to_datetime(d["time"], utc=True)
+            existing = None
+            for s in grouped_setups:
+                if s["symbol"] == d["symbol"] and s["type"] == d["type"]:
+                    s_time = pd.to_datetime(s["time"], utc=True)
+                    if abs((d_time - s_time).total_seconds()) <= 60:
+                        existing = s
+                        break
+            pos_id = d.get("position_id", d.get("order", d.get("ticket", 0)))
+            order_id = d.get("order", d.get("ticket", 0))
+            if existing:
+                existing["tickets"].append(d["ticket"])
+                existing["orders"].append(order_id)
+                existing["position_ids"].append(pos_id)
+                existing["volume"] = round(existing.get("volume", 0.0) + d.get("volume", 0.0), 2)
+            else:
+                grouped_setups.append({
+                    "tickets": [d["ticket"]],
+                    "orders": [order_id],
+                    "position_ids": [pos_id],
+                    "ticket": d["ticket"],
+                    "order": order_id,
+                    "symbol": d["symbol"],
+                    "time": d["time"],
+                    "time_posix": d.get("time_posix", 0),
+                    "type": d["type"],
+                    "entry_type": "ENTRY_IN",
+                    "volume": d.get("volume", 0.0),
+                    "price": d["price"],
+                    "profit": 0.0,
+                    "comment": d["comment"]
+                })
+
+        # Calculate realized PnL for each live setup from corresponding exit deals
+        for s in grouped_setups:
+            s_exit_pnl = sum(ed["profit"] for ed in exit_deals if ed.get("position_id") in s["position_ids"] or ed.get("order") in s["orders"])
+            s["profit"] = round(s_exit_pnl, 2)
+
         matched_live_indices = set()
         reconciliation_items = []
 
-        # Check each backtest trade against live deals
+        # Check each backtest trade against grouped live setups
         for bt in backtest_trades:
             bt_time = pd.to_datetime(bt["entry_time"], utc=True)
-            matched_deal = None
+            matched_setup = None
 
-            for idx, ld in enumerate(live_entries):
+            for idx, ld in enumerate(grouped_setups):
                 if idx in matched_live_indices:
                     continue
                 if ld["symbol"] == bt["symbol"] and ld["type"] == bt["direction"]:
                     ld_time = pd.to_datetime(ld["time"], utc=True)
                     time_diff = abs((ld_time - bt_time).total_seconds())
-                    if time_diff <= 300:  # within 5 minutes
-                        matched_deal = ld
+                    if time_diff <= 360:  # within 6 minutes (allowing for bar close + fill)
+                        matched_setup = ld
                         matched_live_indices.add(idx)
                         break
 
-            if matched_deal:
+            if matched_setup:
+                ticket_str = "/".join(str(t) for t in matched_setup["tickets"])
                 reconciliation_items.append({
                     "status": "MATCHED_SUCCESS",
                     "symbol": bt["symbol"],
                     "direction": bt["direction"],
                     "signal_time": bt["entry_time"],
-                    "live_ticket": matched_deal["ticket"],
+                    "live_ticket": ticket_str,
                     "backtest_entry": bt["actual_entry"],
-                    "live_entry": matched_deal["price"],
+                    "live_entry": matched_setup["price"],
                     "backtest_pnl": bt["net_pnl"],
-                    "live_pnl": matched_deal.get("profit", 0.0),
+                    "live_pnl": matched_setup.get("profit", 0.0),
                     "discrepancy_reason": "Exact strategy entry confirmed and executed by live bot."
                 })
             else:
@@ -499,15 +599,16 @@ class NightlyReconciler:
                     "discrepancy_reason": "Setup found in tick replay but no live broker deal was recorded (Bot was not running, CB cushion was exhausted, or spread spiked at fill)."
                 })
 
-        # Check for unexpected live deals
-        for idx, ld in enumerate(live_entries):
+        # Check for unexpected live setups
+        for idx, ld in enumerate(grouped_setups):
             if idx not in matched_live_indices:
+                ticket_str = "/".join(str(t) for t in ld["tickets"])
                 reconciliation_items.append({
                     "status": "UNEXPECTED_LIVE_DEAL",
                     "symbol": ld["symbol"],
                     "direction": ld["type"],
                     "signal_time": ld["time"],
-                    "live_ticket": ld["ticket"],
+                    "live_ticket": ticket_str,
                     "backtest_entry": None,
                     "live_entry": ld["price"],
                     "backtest_pnl": 0.0,
@@ -517,7 +618,7 @@ class NightlyReconciler:
 
         # Scorecard Metrics
         total_bt = len(backtest_trades)
-        total_live = len(live_entries)
+        total_live = len(grouped_setups)
         matched = sum(1 for item in reconciliation_items if item["status"] == "MATCHED_SUCCESS")
         discrepancies = len(reconciliation_items) - matched
         bt_net_pnl = sum(bt["net_pnl"] for bt in backtest_trades)

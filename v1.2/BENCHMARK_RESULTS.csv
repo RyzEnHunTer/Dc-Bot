@@ -1,0 +1,6 @@
+Policy / Strategy Version,Trades,Win Rate,Total Net PnL,Banked Cash (80%),Max Base DD,Worst Single Day,Evaluation Pass,Prop Firm Status
+Baseline DCC v1.1 (Official Reference),471,54.1%,"+$9,790.39","$6,621.95",7.42%,-$165.97 (3.32%),6d (14 trades),100% PASS (ZERO BREACH)
+Option 1: Pure v1.2 (No Calendar Rules),338,57.4%,"+$9,387.11","$6,222.27",3.41%,-$132.33 (2.65%),17d (26 trades),100% PASS (ZERO BREACH)
+Option 2: Hard Block Monday PM (14-18 UTC) [LOCKED],323,58.8%,"+$9,557.69","$6,387.61",2.86%,-$132.33 (2.65%),17d (25 trades),100% PASS (ZERO BREACH)
+Option 3: Smart Calendar Shield (Mon PM + Fri 06 & 20),315,59.7%,"+$9,643.50","$6,489.55",2.86%,-$132.33 (2.65%),17d (25 trades),100% PASS (ZERO BREACH)
+Option 4: Half-Risk (0.5%) on Monday PM,338,57.4%,"+$9,472.40","$6,304.94",2.86%,-$132.33 (2.65%),17d (26 trades),100% PASS (ZERO BREACH)

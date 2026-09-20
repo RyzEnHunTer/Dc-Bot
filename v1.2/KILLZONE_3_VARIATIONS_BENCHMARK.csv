@@ -1,0 +1,5 @@
+Policy / Strategy Version,Trades,Win Rate,Total Net PnL,Banked Cash (80%),Max Base DD,Worst Single Day,Evaluation Pass,Eval Max DD,Lowest Funded Bal,Prop Firm Status
+Variation 1: Monday Trap Hour Pause ONLY (9 & 13 ENABLED),362,56.9%,"+$9,520.57","$6,001.23",4.91%,-$161.32 (3.23%),11d (17 trades),1.95%,"$4,754.43",100% PASS (ZERO BREACH)
+Variation 2: No Pause on ANY Day (Pure TripleGuard),377,55.7%,"+$9,350.00","$5,992.37",6.94%,-$161.32 (3.23%),7d (16 trades),1.93%,"$4,653.07",100% PASS (ZERO BREACH)
+Variation 3: As v1 has: Daily Killzone Pause Filter [LOCKED],323,58.8%,"+$9,557.69","$6,387.61",2.86%,-$132.33 (2.65%),17d (25 trades),2.24%,"$4,856.89",100% PASS (ZERO BREACH)
+Reference: Baseline DCC v1.1 (All 471 Trades),471,54.1%,"+$9,790.39","$6,621.95",7.42%,-$165.97 (3.32%),6d (14 trades),0.83%,"$4,629.15",100% PASS (ZERO BREACH)

@@ -1,0 +1,6 @@
+Candidate,Total Trades,Win Rate,Total Net PnL,Challenge Pass,Eval Max DD,Banked Cash (80%),Max Base DD,Worst Single Day,Status
+Baseline (Locked Official),471,54.1%,"+$9,790.39",6d (14 trades),0.83%,"$6,621.95",7.42%,-$165.97 (3.32%),100% PASS (ZERO BREACH)
+Variant 1: 1H Stretch Guard ONLY,374,57.8%,"+$10,241.91",11d (18 trades),1.95%,"$7,133.25",5.47%,-$147.67 (2.95%),100% PASS (ZERO BREACH)
+Variant 2: 2H Clearance Rule ONLY (>= 1.0R),370,59.2%,"+$10,293.01",7d (15 trades),1.91%,"$6,544.90",7.08%,-$165.97 (3.32%),100% PASS (ZERO BREACH)
+Variant 3: 1H Stretch + 2H Clearance COMBINED,292,63.0%,"+$10,334.69",17d (23 trades),1.98%,"$6,955.72",2.93%,-$146.36 (2.93%),100% PASS (ZERO BREACH)
+Variant 4: Triple Shield (+ ADX <= 45),263,62.7%,"+$9,424.68",17d (22 trades),1.98%,"$6,149.10",2.37%,-$132.33 (2.65%),100% PASS (ZERO BREACH)

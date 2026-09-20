@@ -71,18 +71,18 @@ def test_bar_close_mode_and_ema_gap_toggle():
     assert bot_backtest_style.use_ema_gap_filter is False
     print("[PASS] Initialized InstitutionalDCCBot in exact backtest match configuration.")
 
-    # 2. Initialize bot in pre_arm mode with EMA gap filter ENABLED (Current strict live bot)
+    # 2. Verify EMA gap filter is permanently nuked (remains False even if requested)
     bot_strict_live = InstitutionalDCCBot(
         symbols=["XAUUSD"],
         dry_run=True,
         use_liquidity_sweep=True,
         use_news_shield=True,
-        use_ema_gap_filter=True,   # ON: Strict live
+        use_ema_gap_filter=True,   # Attempting to pass True
         entry_mode="pre_arm"       # Pre-Arm: Strict live
     )
     assert bot_strict_live.entry_mode == "pre_arm"
-    assert bot_strict_live.use_ema_gap_filter is True
-    print("[PASS] Initialized InstitutionalDCCBot in strict live pre-arm configuration.")
+    assert bot_strict_live.use_ema_gap_filter is False  # Permanently nuked in v1.2 TripleGuard!
+    print("[PASS] Verified InstitutionalDCCBot permanently nukes EMA gap filter (locks to False).")
 
 
 def test_bar_close_vs_pre_arm_decision_logic():
@@ -121,20 +121,19 @@ def test_bar_close_vs_pre_arm_decision_logic():
     assert is_flip_sell is True
 
     # When EMA gap is wide: e.g. ema_gap = 2.0, atr = 3.0 -> 0.35 * atr = 1.05
-    # ema_gap (2.0) > 1.05
     ema_gap = 2.0
     atr = 3.0
     gap_too_wide = ema_gap > (0.35 * atr)
     assert gap_too_wide is True
 
-    # If use_ema_gap_filter is True -> Rejects setup
-    assert (bot.use_ema_gap_filter and gap_too_wide) is False  # Because filter is OFF in backtest mode!
+    # With EMA gap filter permanently nuked, it can NEVER reject setups
+    assert (bot.use_ema_gap_filter and gap_too_wide) is False
 
-    # If use_ema_gap_filter is True (strict) -> It triggers filter rejection
+    # Even if someone instantiates with use_ema_gap_filter=True, it is forced to False
     bot_strict = InstitutionalDCCBot(use_ema_gap_filter=True)
-    assert (bot_strict.use_ema_gap_filter and gap_too_wide) is True
+    assert (bot_strict.use_ema_gap_filter and gap_too_wide) is False
 
-    print("[PASS] EMA flip arithmetic and toggle filter gating verified.")
+    print("[PASS] EMA flip arithmetic and permanent gap filter decommissioning verified.")
 
 
 if __name__ == "__main__":

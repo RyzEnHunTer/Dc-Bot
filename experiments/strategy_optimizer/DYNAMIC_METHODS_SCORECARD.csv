@@ -1,0 +1,6 @@
+Candidate,Total Trades,Win Rate,Total Net PnL,Challenge Pass,Eval Max DD,Banked Cash (80%),Lowest Funded Bal,Max Base DD,Worst Single Day,Status
+0. Baseline Locked (Official 471),471,54.1%,"+$9,790.39",6d (14 trades),0.83%,"$6,621.95","$4,629.15",7.42%,-$165.97 (3.32%),100% PASS (ZERO BREACH)
+Method 1: ATR Dynamic Band (Stretch >= 0.45 + ADX <= 42 + No-Chase),267,58.4%,"+$7,814.23",28d (30 trades),3.46%,"$5,062.05","$4,838.12",3.24%,-$125.50 (2.51%),100% PASS (ZERO BREACH)
+Method 2: 1H EMA Fan (Separation Ratio >= 0.15x ATR),350,55.4%,"+$8,568.82",6d (14 trades),0.83%,"$5,573.59","$4,629.15",7.42%,-$172.90 (3.46%),100% PASS (ZERO BREACH)
+Method 3: Rolling 5-Day Percentile (20% - 90% Quantile),321,57.3%,"+$8,168.95",7d (15 trades),1.91%,"$5,341.32","$4,569.64",8.61%,-$148.15 (2.96%),100% PASS (ZERO BREACH)
+Method 4: Institutional Hybrid (ATR Band + EMA Fan + ADX Cap),250,59.6%,"+$7,959.87",28d (28 trades),3.27%,"$5,242.00","$4,838.12",3.24%,-$125.50 (2.51%),100% PASS (ZERO BREACH)

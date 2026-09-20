@@ -21,7 +21,7 @@ class TestLiveCandleEvaluation(unittest.TestCase):
         bot.entry_end_hour_utc = 19
         bot.trap_hours_utc = [9, 13]
         bot.use_news_shield = False
-        bot.use_ema_gap_filter = False
+        bot.strategy_version = "v1.2"
         bot.use_liquidity_sweep = False
         bot.entry_mode = "bar_close"
         bot.armed_states = {"XAUUSD": MagicMock(is_armed=False)}
@@ -71,7 +71,7 @@ class TestLiveCandleEvaluation(unittest.TestCase):
         }
         mock_rates = [rates_record] * 100
 
-        eval_time = datetime(2026, 9, 14, 14, 5, 0, tzinfo=timezone.utc)
+        eval_time = datetime(2026, 9, 15, 14, 5, 0, tzinfo=timezone.utc)
 
         with patch('live_bot.datetime') as mock_datetime, patch('live_bot.mt5') as mock_mt5:
             mock_datetime.now.return_value = eval_time
@@ -114,7 +114,7 @@ class TestLiveCandleEvaluation(unittest.TestCase):
         bot.entry_end_hour_utc = 19
         bot.trap_hours_utc = [9, 13]
         bot.use_news_shield = False
-        bot.use_ema_gap_filter = False
+        bot.strategy_version = "v1.2"
         bot.use_liquidity_sweep = False
         bot.entry_mode = "bar_close"
         bot.armed_states = {"XAUUSD": MagicMock(is_armed=False)}

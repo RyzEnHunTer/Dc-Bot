@@ -1,0 +1,50 @@
+[
+  {
+    "user": "Nihad",
+    "time": "2026-09-15T07:19:39.781Z",
+    "text": "Without drawdown",
+    "notes": "Zero-drawdown trade execution reported."
+  },
+  {
+    "user": "ramyn",
+    "time": "2026-09-15T07:45:57.537Z",
+    "text": "(B tier setup, vwap wasnt aligned) (edited)\nTuesday, September 15, 2026 at 1:37 PM",
+    "notes": "Key rule: Setup downgraded to B-Tier if Session VWAP is not aligned!"
+  },
+  {
+    "user": "!    𝑴𝒂𝒉𝒎𝒖𝒅 🇧🇩",
+    "time": "2026-09-15T08:09:29.195Z",
+    "text": "Yesterday A+",
+    "notes": "Monday 2026-09-14 trade classified as A+ setup."
+  },
+  {
+    "user": "Unknown",
+    "time": "2026-09-15T08:12:52.725Z",
+    "text": "Today [ Valid ]",
+    "notes": "Tuesday 2026-09-15 setup confirmed valid by community member."
+  },
+  {
+    "user": "Abdullah Bin Shams",
+    "time": "2026-09-15T08:13:35.851Z",
+    "text": "Btc done and dusted!",
+    "notes": "Community is applying the DCC 5M/1H strategy to BTC (Bitcoin) successfully."
+  },
+  {
+    "user": "dipon",
+    "time": "2026-09-15T10:50:32.200Z",
+    "text": "+1.5R got hittt",
+    "notes": "Partial exit / milestone target at 1.5R."
+  },
+  {
+    "user": "@oui",
+    "time": "2026-09-15T05:01:02.201Z",
+    "text": "+2rr during school lunch (edited)\nTuesday, September 15, 2026 at 10:31 AM",
+    "notes": "Standard 1:2 RR target hit during Asian/London overlap."
+  },
+  {
+    "user": "@alf",
+    "time": "2026-09-15T13:56:04.071Z",
+    "text": "I'm reviewing the setup, but I don't understand it when I try to replicate it on my TradingView. First, your SL should be around 45 points, placed just above the last swing high. However, when I check the ATR on the H1 chart, it's around 90, so 90% of that would be about 81 points—which is a much wider stop loss. Second, on the H1 chart I can see that the 9 EMA is above the 20 EMA, which according to the rules means we should be looking for long entries. Thanks in advance!",
+    "notes": "Crucial community debate: Swing high SL (45 points) vs 1H 90% ATR SL (81 points), and 1H 9 EMA vs 20 EMA trend filter."
+  }
+]

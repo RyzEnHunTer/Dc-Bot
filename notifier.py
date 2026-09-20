@@ -607,6 +607,26 @@ class NotificationManager:
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
+    def notify_challenge_passed(self, account_id: str, phase: Any, target_pct: float, current_balance: float, profit_dollar: float, profit_pct: float):
+        """Notifies when a prop firm evaluation challenge target is successfully reached."""
+        now_str = format_dual_time(include_date=True)
+        tg_text = (
+            f"🏆🏆 <b>PROP FIRM CHALLENGE TARGET REACHED! (PHASE {phase})</b> 🏆🏆\n\n"
+            f"• <b>Account:</b> {account_id}\n"
+            f"• <b>Target:</b> +{target_pct:.1f}% PASSED!\n"
+            f"• <b>Current Balance:</b> ${current_balance:,.2f}\n"
+            f"• <b>Total Profit:</b> +${profit_dollar:,.2f} (+{profit_pct:.2f}%)\n"
+            f"• <b>Status:</b> Trading HALTED to protect your pass and prevent overtrading.\n"
+            f"• <b>Time:</b> {now_str}"
+        )
+        discord_embed = {
+            "title": f"🏆 PROP FIRM CHALLENGE PASSED! (Phase {phase}: +{target_pct:.1f}%) 🏆",
+            "description": f"**Evaluation target reached! Trading halted to lock in the pass.**\n\n• **Account:** `{account_id}`\n• **Balance:** `${current_balance:,.2f}`\n• **Profit:** `+${profit_dollar:,.2f} (+{profit_pct:.2f}%)`",
+            "color": 0x00FF00,
+            "footer": {"text": f"Passed at {now_str}"}
+        }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
     def notify_circuit_breaker(self, cb_type: str, current_equity: float, limit_pct: float, loss_amount: float, hard_limit_pct: Optional[float] = None):
         """Emergency notification when a circuit breaker triggers."""
         now_str = format_dual_time(include_date=True)

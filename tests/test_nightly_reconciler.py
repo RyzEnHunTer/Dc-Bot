@@ -97,7 +97,7 @@ class TestNightlyReconciler(unittest.TestCase):
 
         details = result["reconciliation_details"]
         self.assertEqual(details[0]["status"], "MATCHED_SUCCESS")
-        self.assertEqual(details[0]["live_ticket"], 12345678)
+        self.assertEqual(str(details[0]["live_ticket"]), "12345678")
         self.assertEqual(details[1]["status"], "MISSED_OR_FILTERED")
 
     def test_unexpected_live_deal_detection(self):

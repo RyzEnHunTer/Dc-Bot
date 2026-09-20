@@ -1,0 +1,5 @@
+Policy / Strategy Version,Trades,Win Rate,Total Net PnL,Banked Cash (80%),Max Base DD,Worst Single Day,Evaluation Pass,Prop Firm Status
+Canonical Option 2 (Benchmark Reference: 9 & 13 Paused + Mon PM Paused),354,47.5%,"+$2,817.22","$1,615.29",8.72%,-$142.79 (2.86%),76d (111 trades),100% PASS (ZERO BREACH)
+Unpaused Killzone v1.2 (9 & 13 ENABLED + Monday PM Paused),383,47.8%,"+$3,124.71","$1,935.16",6.54%,-$142.79 (2.86%),116d (174 trades),100% PASS (ZERO BREACH)
+Pure Unpaused v1.2 (9 & 13 ENABLED + NO Pauses at all),404,46.0%,"+$2,469.29","$1,371.61",9.73%,-$142.79 (2.86%),126d (201 trades),100% PASS (ZERO BREACH)
+"Raw Unfiltered Killzone (No TripleGuard, 9 & 13 ENABLED)",552,45.5%,"+$2,873.55","$1,631.49",4.56%,-$144.97 (2.90%),126d (283 trades),100% PASS (ZERO BREACH)

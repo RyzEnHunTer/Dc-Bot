@@ -400,9 +400,23 @@ def main():
     phase2_no_sweep_csv = os.path.join(PROJECT_ROOT, "reports", "trades_log_phase2_no_sweep.csv")
     cb_3pct_csv = os.path.join(PROJECT_ROOT, "reports", "trades_log_with_3pct_circuit_breaker.csv")
     opt_csv = os.path.join(PROJECT_ROOT, "reports", "trades_log_optimized_low_dd.csv")
+    apexhunter_csv = os.path.join(PROJECT_ROOT, "reports", "trades_apexhunter_official.csv")
 
     p1_trades = parse_trades(phase1_csv, candles) if os.path.exists(phase1_csv) else []
     p2_trades = parse_trades(phase2_csv, candles) if os.path.exists(phase2_csv) else []
+
+    # Flagship: DCC v1.2 ApexHunter Production Model
+    if os.path.exists(apexhunter_csv):
+        apexhunter_trades = parse_trades(apexhunter_csv, candles)
+        for i, tr in enumerate(apexhunter_trades, 1):
+            tr['trade_id'] = i
+        strategies["apexhunter_official"] = {
+            "name": "DCC v1.2 ApexHunter (Official Flagship Dual-Gear)",
+            "description": "Production institutional engine: Dual-Gear Regime (1.30%/1.00%), Smart Killzone (Stretch>=1.10x), TripleGuard & 3% Daily CB (342 trades, 59.4% WR, +$10,363 PnL).",
+            "metrics": compute_metrics(apexhunter_trades),
+            "trades": apexhunter_trades
+        }
+        print(f"-> DCC v1.2 ApexHunter Flagship: {len(apexhunter_trades)} trades.")
 
     # Combined Chained Trades (All 8.25 Months: Jan 1 - Sep 8, 2026)
     if p1_trades and p2_trades:

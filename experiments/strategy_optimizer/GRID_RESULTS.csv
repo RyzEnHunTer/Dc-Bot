@@ -1,0 +1,16 @@
+config_id,name,use_sweep,max_h1_stretch,max_recent_flips,tp_model,blocked_hours,comb_trades,comb_pnl,comb_pnl_pct,comb_wr,comb_pf,comb_max_dd_pct,comb_max_dd_dollars,comb_daily_dd_pct,comb_daily_dd_dollars,xau_trades,xau_pnl,xau_wr,nas_trades,nas_pnl,nas_wr,sep15_trades,sep15_pnl
+1,1_Baseline_Locked_SweepON_KZ_Blocked,True,None,None,fixed,"[9, 13]",220,2504.24,50.08,50.45,1.45,11.36,725.45,2.32,116.22,108,1165.92,48.15,112,1338.32,52.68,0,0.0
+2,2_Pure_DCC_SweepOFF_KZ_Blocked,False,None,None,fixed,"[9, 13]",399,3734.57,74.69,50.38,1.37,7.4,463.95,4.09,204.6,202,2361.99,50.5,197,1372.58,50.25,0,0.0
+3,3_SweepON_Full_Session_No_KZ_Block,True,None,None,fixed,[],257,3076.63,61.53,50.97,1.48,7.62,492.71,3.07,153.7,127,1630.29,50.39,130,1446.34,51.54,0,0.0
+4,4_SweepOFF_Full_Session_No_KZ_Block,False,None,None,fixed,[],422,3440.69,68.81,49.76,1.32,8.4,510.86,4.09,204.6,213,2399.23,50.7,209,1041.46,48.8,0,0.0
+5,5_SweepOFF_Stretch_0.85ATR,False,0.85,None,fixed,[],170,919.76,18.4,48.24,1.21,11.97,691.23,3.08,154.05,93,572.47,48.39,77,347.29,48.05,0,0.0
+6,6_SweepOFF_Stretch_1.00ATR,False,1.0,None,fixed,[],215,1114.67,22.29,48.37,1.2,8.16,486.3,3.08,154.05,113,509.7,46.9,102,604.97,50.0,0,0.0
+7,7_SweepON_Stretch_0.85ATR,True,0.85,None,fixed,[],95,1678.85,33.58,56.84,1.8,5.6,324.18,2.09,104.45,52,726.67,51.92,43,952.18,62.79,0,0.0
+8,8_SweepON_Stretch_1.00ATR,True,1.0,None,fixed,[],117,2267.35,45.35,58.12,1.91,5.22,305.25,2.1,104.85,64,1035.5,53.12,53,1231.85,64.15,0,0.0
+9,9_SweepOFF_ChopFilter_Max1Flip,False,None,1,fixed,[],294,2268.06,45.36,49.32,1.3,11.2,696.07,3.08,153.8,153,2355.49,53.59,141,-87.43,44.68,0,0.0
+10,10_SweepON_ChopFilter_Max1Flip,True,None,1,fixed,[],131,1269.56,25.39,48.85,1.37,7.49,458.1,2.1,104.85,62,896.07,50.0,69,373.49,47.83,0,0.0
+11,11_SweepOFF_Dynamic2H_TP,False,None,None,dynamic_2h,[],510,2252.34,45.05,58.04,1.21,12.2,683.98,4.05,202.4,252,1502.5,58.73,258,749.84,57.36,0,0.0
+12,12_SweepON_Dynamic2H_TP,True,None,None,dynamic_2h,[],282,2411.24,48.22,60.99,1.43,6.41,376.78,2.1,104.85,132,1300.25,60.61,150,1110.99,61.33,0,0.0
+13,13_Synergy_SweepOFF_Stretch085_Chop1_DynTP,False,0.85,1,dynamic_2h,[],124,215.88,4.32,53.23,1.07,8.01,437.85,2.09,104.35,69,204.63,53.62,55,11.25,52.73,0,0.0
+14,14_Synergy_SweepON_Stretch085_Chop1_DynTP,True,0.85,1,dynamic_2h,[],52,619.12,12.38,59.62,1.58,5.53,302.05,2.09,104.45,29,266.83,55.17,23,352.29,65.22,0,0.0
+15,15_Synergy_SweepOFF_Stretch100_Chop1_FixedTP,False,1.0,1,fixed,[],148,667.75,13.36,47.97,1.17,7.83,458.47,2.1,104.85,80,589.8,48.75,68,77.95,47.06,0,0.0

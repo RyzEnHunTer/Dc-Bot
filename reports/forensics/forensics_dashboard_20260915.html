@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DCC Trade Forensics Dossier — 2026-09-15</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0d14;
+            --bg-secondary: #111726;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-indigo: #6366f1;
+            --accent-amber: #f59e0b;
+            --accent-blue: #38bdf8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            line-height: 1.5;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+        h1 {
+            font-size: 26px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff, #9ca3af);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .badge-date {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-indigo);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 13px;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .kpi-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 18px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+        .kpi-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+        .kpi-val {
+            font-size: 24px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .pnl-positive { color: var(--accent-green); }
+        .pnl-negative { color: var(--accent-red); }
+        .green { color: var(--accent-green); }
+        .red { color: var(--accent-red); }
+        .amber { color: var(--accent-amber); }
+        .blue { color: var(--accent-blue); }
+
+        .memo-container {
+            background: rgba(17, 24, 39, 0.6);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            border-left: 4px solid var(--accent-indigo);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 32px;
+        }
+        .memo-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #c7d2fe;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .memo-text {
+            font-size: 14px;
+            color: #e5e7eb;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #e5e7eb;
+        }
+        .trade-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+        .trade-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 22px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .trade-card:hover {
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+        .trade-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .trade-meta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .symbol-pill {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .dir-pill {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .dir-pill.buy { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+        .dir-pill.sell { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .ticket-pill {
+            color: var(--text-muted);
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .verdict-badge {
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .excursion-bar-container {
+            display: flex;
+            gap: 16px;
+            background: rgba(0, 0, 0, 0.25);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .metric-mini {
+            display: flex;
+            flex-direction: column;
+        }
+        .metric-mini .label {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .metric-mini .val {
+            font-size: 15px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .root-cause-box {
+            background: rgba(239, 68, 68, 0.06);
+            border-left: 3px solid var(--accent-red);
+            padding: 12px 14px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+        }
+        .box-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #d1d5db;
+            margin-bottom: 4px;
+        }
+        .box-text {
+            font-size: 14px;
+            color: #f3f4f6;
+        }
+        .factors-box {
+            padding: 8px 14px;
+            margin-bottom: 12px;
+        }
+        .factors-list {
+            list-style-type: none;
+            padding-left: 0;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .factors-list li {
+            margin-bottom: 4px;
+            position: relative;
+            padding-left: 14px;
+        }
+        .factors-list li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: var(--accent-indigo);
+        }
+        .rule-box {
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #d1fae5;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .rule-icon { font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>DCC Algorithmic Trade Forensics Dossier</h1>
+                <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">Institutional Mathematical Autopsy & Strategy Failure/Success Analysis</p>
+            </div>
+            <div class="badge-date">2026-09-15</div>
+        </header>
+
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">Session Net PnL</div>
+                <div class="kpi-val pnl-negative">
+                    $-33.48
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Trades Analyzed</div>
+                <div class="kpi-val">7</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Win Rate</div>
+                <div class="kpi-val green">14.3%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Daily Drawdown</div>
+                <div class="kpi-val red">-0.63%</div>
+            </div>
+        </div>
+
+        <div class="memo-container">
+            <div class="memo-title">
+                <span>🏛️</span> Executive Trade Desk Briefing
+            </div>
+            <div class="memo-text"># DCC Algorithmic Strategy — Daily Executive Risk Briefing
+**Session Date:** 2026-09-15 | **Prepared by:** Chief Risk Officer
+
+---
+
+## **1. Session Financial Performance**
+
+- **Net PnL:** **-$33.48** across **7 total trades** (1 winner, 6 losers/scratch).
+- **Win Rate:** **14.3%** — a single NAS100 mean-reversion capture (+$80.98 / +2.62R) was overwhelmed by six adverse outcomes.
+- **Daily Drawdown:** **0.63%** — within tolerance thresholds but signaling deteriorating edge quality.
+- **Portfolio Impact:** The sole winner offset only **71%** of the realized SL losses (-$114.46 combined), while two NAS100 scratch trades (MFE: +3.38R each) yielded **$0.00**, representing significant opportunity cost. The session's risk-to-reward profile was severely negative, with the strategy failing to convert high-MFE setups into realized gains.
+
+---
+
+## **2. Technical Autopsy — Winning vs. Losing Trade Dynamics**
+
+- **Winning Trade (NAS100 SELL — Ticket N/A):** A textbook mean-reversion capture. Entry was anchored tightly to the 1H EMA20 at **0.59x ATR** stretch, with a clean liquidity sweep of **2.90 pts** (LSQI: 70/100). The trade expanded to a **peak MFE of +2.66R** with a shallow MAE of only **0.39R**, held for **17 bars** at a favorable **RVol of 0.97x**. This confirms the DCC edge when compression equilibrium and liquidity confirmation align.
+
+- **Losing Trades — Market Volatility Stop-Outs (XAUUSD ×2):** Both XAUUSD sells (Tickets 765290443 & 765290444) posted identical **-0.94R / -$57.23** losses. Root cause: **1H ADX momentum decayed 0.47 pts** into entry, volume triggers were weak (**0.56x and 0.53x** 20-SMA), and adverse wick rejection (**62%**) fought position direction. The **1H EMA Stretch was stretched at 1.01x ATR**, violating the sub-0.9x mandate — entry occurred into expanding, not compressing, conditions.
+
+- **Losing Trades — Chop & Compression Decay (XAUUSD ×2):** Tickets 765347031 & 765347035 both lingered **25 bars** in sideways compression with **0.63x SMA volume** and near-zero follow-through (**MFE: 0.29R**), eventually drifting to SL. Despite a compliant **0.77x ATR** stretch and LSQI of 70/100, the **1H ADX fell 0.73 pts**, confirming momentum absence. MAE reached **1.34R / 1.35R** — the time-decay failure mode was fully realized.
+
+- **Scratch Trades — Near-Miss Reversals (NAS100 ×2):** Tickets 765407399 & 765407400 reached an extraordinary **MFE of +3.38R** (within ticks of the 28950.00 TP1 target) but reversed violently to **$0.00**. Contributing factors included a thin **0.4</div>
+        </div>
+
+        <div class="section-title">🔍 Individual Strategy Autopsies</div>
+        <div class="trade-grid">
+            
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">XAUUSD</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765290443</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        📉 Market Volatility Stop-Out
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+0.12R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-1.17R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">1.01x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">80/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-negative">$-57.23</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade followed DCC entry criteria but encountered regular market order flow rejection (PnL: -0.94R).</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>1H ADX Momentum Loss: ADX fell 0.47 pts leading into entry.</li><li>Low Volume Trigger: 5M bar had only 0.56x 20-SMA volume.</li><li>Adverse Wick: Trigger bar showed 62% rejection wick fighting position direction.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Natural market friction. Maintain risk discipline.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(16, 185, 129, 0.3);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">NAS100</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #2</span>
+                        <span class='winner-pill' style='background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;'>WINNING EDGE</span>
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981;">
+                        🎯 High-Quality Mean Reversion Capture
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+2.66R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-0.39R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">0.59x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">70/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">0.97x</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-positive">$+80.98</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="border-left-color: #10b981;">
+                    <div class="box-title">🎯 Execution Analysis & Edge Mechanics:</div>
+                    <div class="box-text">Precision value entry: Setup triggered with ample room back to the 1H EMA20 (0.59x ATR) and clean liquidity grab confirmation (70/100 LSQI).</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">🏆 Winning Edge Catalysts & Confluences:</div>
+                    <ul class="factors-list">
+                        <li>Clean Liquidity Sweep: Cleared 2.90 pts of resting liquidity (LSQI: 70/100).</li><li>Compression Equilibrium: Entry was tight to 1H EMA20 (0.59x ATR).</li><li>Favorable Extension: Trade expanded to a peak excursion of +2.66R.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.2);">
+                    <span class="rule-icon">💎</span>
+                    <span class="rule-text"><strong>Edge Preservation & Scaling:</strong> Mean-reversion bounce verified. Maintain 1H EMA stretch requirement under 0.9x ATR.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">XAUUSD</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765290444</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        📉 Market Volatility Stop-Out
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+0.03R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-1.17R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">1.01x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">80/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-negative">$-57.23</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade followed DCC entry criteria but encountered regular market order flow rejection (PnL: -0.94R).</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>1H ADX Momentum Loss: ADX fell 0.47 pts leading into entry.</li><li>Low Volume Trigger: 5M bar had only 0.53x 20-SMA volume.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Natural market friction. Maintain risk discipline.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">XAUUSD</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765347031</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        ⏳ Stale Chop & Compression Decay
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+0.29R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-1.34R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">0.77x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">70/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-positive">$+0.00</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade lingered for 25 bars in sideways compression with low volume (0.63x SMA) and zero follow-through (MFE: 0.29R) before drifting into the Stop Loss.</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>1H ADX Momentum Loss: ADX fell 0.73 pts leading into entry.</li><li>Low Volume Trigger: 5M bar had only 0.63x 20-SMA volume.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Add a time-based decay rule: If trade fails to achieve +0.5R within 6 bars, tighten stop loss to reduced risk.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">XAUUSD</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765347035</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        ⏳ Stale Chop & Compression Decay
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+0.29R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-1.35R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">0.77x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">70/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-positive">$+0.00</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade lingered for 25 bars in sideways compression with low volume (0.63x SMA) and zero follow-through (MFE: 0.29R) before drifting into the Stop Loss.</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>1H ADX Momentum Loss: ADX fell 0.73 pts leading into entry.</li><li>Low Volume Trigger: 5M bar had only 0.63x 20-SMA volume.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Add a time-based decay rule: If trade fails to achieve +0.5R within 6 bars, tighten stop loss to reduced risk.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">NAS100</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765407399</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        💔 Near-Miss Reversal (TP1 Target Miss)
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+3.38R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-2.15R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">0.99x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">80/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-positive">$+0.00</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade showed strong initial momentum, reaching a peak of +3.38R (within a few ticks of the 28950.00 TP1 target), but failed to fill before a violent reversal stopped it out.</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>Low Volume Trigger: 5M bar had only 0.44x 20-SMA volume.</li><li>High Unrealized Excursion: Trade reached +3.38R before failing.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Evaluate dynamic trailing SL or moving SL to partial breakeven once favorable excursion crosses +1.0R.</span>
+                </div>
+            </div>
+            
+
+            <div class="trade-card" style="border-color: rgba(255, 255, 255, 0.08);">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">NAS100</span>
+                        <span class="dir-pill sell">SELL</span>
+                        <span class="ticket-pill">Ticket #765407400</span>
+                        
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        💔 Near-Miss Reversal (TP1 Target Miss)
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+3.38R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-2.15R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">0.99x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">80/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">RVol:</span>
+                        <span class="val" style="color: #a78bfa;">-</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-positive">$+0.00</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box" style="">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Trade showed strong initial momentum, reaching a peak of +3.38R (within a few ticks of the 28950.00 TP1 target), but failed to fill before a violent reversal stopped it out.</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Risk Factors:</div>
+                    <ul class="factors-list">
+                        <li>Low Volume Trigger: 5M bar had only 0.44x 20-SMA volume.</li><li>High Unrealized Excursion: Trade reached +3.38R before failing.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box" style="">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Evaluate dynamic trailing SL or moving SL to partial breakeven once favorable excursion crosses +1.0R.</span>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</body>
+</html>

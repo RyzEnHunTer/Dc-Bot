@@ -1,0 +1,2 @@
+**Overall Session Financial Performance**
+    The DCC algorithmic strategy delivered a net positive session PnL of **$130.35** across 4 total trades, achieving a 50.0% win rate (2 winning trades, 2 losing trades). Crucially, the portfolio maintained a **0.0% daily

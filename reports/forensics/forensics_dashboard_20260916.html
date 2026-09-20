@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DCC Trade Forensics Dossier — 2026-09-16</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0d14;
+            --bg-secondary: #111726;
+            --bg-card: rgba(17, 24, 39, 0.7);
+            --border: rgba(255, 255, 255, 0.08);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-indigo: #6366f1;
+            --accent-amber: #f59e0b;
+            --accent-blue: #38bdf8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            line-height: 1.5;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+        h1 {
+            font-size: 26px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff, #9ca3af);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .badge-date {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-indigo);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 13px;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .kpi-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 18px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+        .kpi-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+        .kpi-val {
+            font-size: 24px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .pnl-positive { color: var(--accent-green); }
+        .pnl-negative { color: var(--accent-red); }
+        .green { color: var(--accent-green); }
+        .red { color: var(--accent-red); }
+        .amber { color: var(--accent-amber); }
+        .blue { color: var(--accent-blue); }
+
+        .memo-container {
+            background: rgba(17, 24, 39, 0.6);
+            border: 1px solid rgba(99, 102, 241, 0.25);
+            border-left: 4px solid var(--accent-indigo);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 32px;
+        }
+        .memo-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #c7d2fe;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .memo-text {
+            font-size: 14px;
+            color: #e5e7eb;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #e5e7eb;
+        }
+        .trade-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+        .trade-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 22px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .trade-card:hover {
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+        .trade-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .trade-meta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .symbol-pill {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .dir-pill {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .dir-pill.buy { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
+        .dir-pill.sell { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .ticket-pill {
+            color: var(--text-muted);
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .verdict-badge {
+            padding: 5px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .excursion-bar-container {
+            display: flex;
+            gap: 16px;
+            background: rgba(0, 0, 0, 0.25);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .metric-mini {
+            display: flex;
+            flex-direction: column;
+        }
+        .metric-mini .label {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .metric-mini .val {
+            font-size: 15px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .root-cause-box {
+            background: rgba(239, 68, 68, 0.06);
+            border-left: 3px solid var(--accent-red);
+            padding: 12px 14px;
+            border-radius: 4px;
+            margin-bottom: 12px;
+        }
+        .box-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #d1d5db;
+            margin-bottom: 4px;
+        }
+        .box-text {
+            font-size: 14px;
+            color: #f3f4f6;
+        }
+        .factors-box {
+            padding: 8px 14px;
+            margin-bottom: 12px;
+        }
+        .factors-list {
+            list-style-type: none;
+            padding-left: 0;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        .factors-list li {
+            margin-bottom: 4px;
+            position: relative;
+            padding-left: 14px;
+        }
+        .factors-list li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: var(--accent-indigo);
+        }
+        .rule-box {
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #d1fae5;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .rule-icon { font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>DCC Algorithmic Trade Forensics Dossier</h1>
+                <p style="color: var(--text-muted); font-size: 14px; margin-top: 4px;">Institutional Mathematical Autopsy & Strategy Failure/Success Analysis</p>
+            </div>
+            <div class="badge-date">2026-09-16</div>
+        </header>
+
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">Session Net PnL</div>
+                <div class="kpi-val pnl-negative">
+                    $-50.00
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Trades Analyzed</div>
+                <div class="kpi-val">1</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Win Rate</div>
+                <div class="kpi-val green">0.0%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Daily Drawdown</div>
+                <div class="kpi-val red">-0.94%</div>
+            </div>
+        </div>
+
+        <div class="memo-container">
+            <div class="memo-title">
+                <span>🏛️</span> Executive Trade Desk Briefing
+            </div>
+            <div class="memo-text">**Session Financial Performance**
+On 2026-09-16, the DCC algorithmic strategy closed the session with a net PnL of -$50.0, resulting from a single executed trade. The daily win rate stood at 0.0% (0 winning, 1 losing trade), triggering a daily drawdown of 0.94%. While the absolute capital impact is contained, the loss represents a -0.9R hit, indicating a structural inefficiency in entry execution rather than a broad portfolio failure. The strategy's capital allocation remained disciplined, but the immediate stop-out highlights a vulnerability in trade selection criteria.
+
+**Technical Autopsy**
+The sole position (XAUUSD BUY) was stopped out due to a critical "1H Rubber-Band Trend Exhaustion" trap. The algorithm initiated a long entry severely overextended at 1.86x 1H ATR away from the 1H EMA20, directly into rolling-over momentum (1H ADX at 22.5 with a +1.30 slope). The trade experienced minimal favorable excursion (MFE of 0.18R) before suffering a maximum adverse excursion (MAE) of 1.00R, culminating in a full stop-loss. The trigger bar exhibited a 45% adverse rejection wick, confirming the mean-reversion counter-flow that snapped price back to its 1H mean and invalidated the exhausted breakout attempt.
+
+**Strategic Takeaway & Risk Mandate**
+The DCC strategy is currently vulnerable to high-timeframe (HTF) exhaustion entries, compromising execution quality (LSQI Score: 70/100). To mitigate this mean-reversion risk, the following risk mandates are effective immediately:
+*   **Implement a strict 1H EMA20 stretch ceiling:** Block all new entries when the distance from the 1H EMA20 exceeds 1.35x ATR.
+*   **Enhance momentum filtering:** Incorporate a secondary validation check on the 1H ADX slope to ensure momentum is not actively rolling over prior to execution.</div>
+        </div>
+
+        <div class="section-title">🔍 Individual Strategy Autopsies</div>
+        <div class="trade-grid">
+            
+            <div class="trade-card">
+                <div class="trade-card-header">
+                    <div class="trade-meta">
+                        <span class="symbol-pill">XAUUSD</span>
+                        <span class="dir-pill buy">BUY</span>
+                        <span class="ticket-pill">Ticket #1</span>
+                    </div>
+                    <div class="verdict-badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid #ef4444;">
+                        ⚠️ 1H Rubber-Band Trend Exhaustion
+                    </div>
+                </div>
+
+                <div class="excursion-bar-container">
+                    <div class="metric-mini">
+                        <span class="label">MFE (Peak):</span>
+                        <span class="val green">+0.18R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">MAE (Heat):</span>
+                        <span class="val red">-1.00R</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">1H Stretch:</span>
+                        <span class="val amber">1.86x ATR</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">LSQI:</span>
+                        <span class="val blue">70/100</span>
+                    </div>
+                    <div class="metric-mini">
+                        <span class="label">Net PnL:</span>
+                        <span class="val pnl-negative">$-50.00</span>
+                    </div>
+                </div>
+
+                <div class="root-cause-box">
+                    <div class="box-title">🔬 Forensic Root Cause:</div>
+                    <div class="box-text">Entry was severely overextended (1.86x 1H ATR away from 1H EMA20) while 1H ADX was actively rolling over (22.5, slope: +1.30). The trade bought/sold into exhausted momentum and was snapped back by mean-reversion counter-flow.</div>
+                </div>
+
+                <div class="factors-box">
+                    <div class="box-title">📊 Contributing Flaws / Factors:</div>
+                    <ul class="factors-list">
+                        <li>1H EMA20 Stretch: Price was 1.86x ATR away from its 1H mean.</li><li>Adverse Wick: Trigger bar showed 45% rejection wick fighting position direction.</li>
+                    </ul>
+                </div>
+
+                <div class="rule-box">
+                    <span class="rule-icon">💡</span>
+                    <span class="rule-text"><strong>Strategy Optimization:</strong> Implement a strict 1H EMA20 stretch ceiling: Block new entries when distance from 1H EMA20 exceeds 1.35x ATR.</span>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</body>
+</html>

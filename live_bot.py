@@ -312,11 +312,14 @@ class AccountConfigManager:
             if "use_news_shield" not in cfg:
                 cfg["use_news_shield"] = True
                 needs_save = True
-            if "use_ema_gap_filter" not in cfg:
-                cfg["use_ema_gap_filter"] = False
+            if "use_ema_gap_filter" in cfg:
+                del cfg["use_ema_gap_filter"]
                 needs_save = True
             if "entry_mode" not in cfg:
                 cfg["entry_mode"] = "bar_close"
+                needs_save = True
+            if "strategy_version" not in cfg:
+                cfg["strategy_version"] = "v1.2"
                 needs_save = True
             if "daily_cb_pct" not in cfg:
                 cfg["daily_cb_pct"] = round(max(0.1, cfg.get("daily_dd_limit_pct", 4.0) - 1.0), 2)
@@ -324,6 +327,41 @@ class AccountConfigManager:
             if "max_cb_pct" not in cfg:
                 cfg["max_cb_pct"] = round(max(0.1, cfg.get("max_total_dd_pct", 8.0) - 1.0), 2)
                 needs_save = True
+            # Lifecycle migration for existing accounts
+            if "account_lifecycle" not in cfg:
+                cfg["account_lifecycle"] = "challenge"
+                needs_save = True
+            if "challenge_steps" not in cfg:
+                cfg["challenge_steps"] = 2
+                needs_save = True
+            if "current_phase" not in cfg:
+                cfg["current_phase"] = 1
+                needs_save = True
+            if "phase_1_target_pct" not in cfg:
+                cfg["phase_1_target_pct"] = 8.0
+                needs_save = True
+            if "phase_2_target_pct" not in cfg:
+                cfg["phase_2_target_pct"] = 5.0
+                needs_save = True
+            if "phase_start_balance" not in cfg:
+                cfg["phase_start_balance"] = round(float(account_info.balance), 2)
+                needs_save = True
+            if "challenge_risk_pct" not in cfg:
+                cfg["challenge_risk_pct"] = 1.30
+                needs_save = True
+            if "funded_risk_pct" not in cfg:
+                cfg["funded_risk_pct"] = 1.0
+                needs_save = True
+            if "target_locked" not in cfg:
+                cfg["target_locked"] = False
+                needs_save = True
+            # Dynamic sync of active risk per trade
+            active_risk_pct = cfg["challenge_risk_pct"] if cfg.get("account_lifecycle") == "challenge" else cfg["funded_risk_pct"]
+            expected_risk_dec = round(active_risk_pct / 100.0, 4)
+            if cfg.get("risk_per_trade") != expected_risk_dec:
+                cfg["risk_per_trade"] = expected_risk_dec
+                needs_save = True
+
             # Track peak high-water mark
             if account_info.equity > cfg.get("high_water_mark", 0.0):
                 cfg["high_water_mark"] = round(float(account_info.equity), 2)
@@ -337,33 +375,90 @@ class AccountConfigManager:
         print(f"  >>> [NEW MT5 ACCOUNT DETECTED: {acc_id} ({account_info.server})] <<<")
         print("=" * 80)
         print(f"Equity: ${account_info.equity:,.2f} | Balance: ${account_info.balance:,.2f} | Leverage: 1:{account_info.leverage}")
-        print("Let's configure the Risk, Drawdown Limits & Circuit Breakers for this account:\n")
+        print("Let's configure the Account Lifecycle, Targets, Risk, and Circuit Breakers:\n")
 
         if auto_defaults:
+            lifecycle = "challenge"
+            ch_steps = 2
+            curr_phase = 1
+            p1_target = 8.0
+            p2_target = 5.0
+            ch_risk = 1.25
+            funded_risk = 1.0
+            start_bal = round(float(account_info.balance), 2)
             daily_dd = 4.0
             daily_cb = 3.0
             max_dd = 8.0
             max_cb = 7.0
-            risk_pct = 1.0
-            print(f"  [Auto-Assigned Defaults] Daily DD Limit: {daily_dd}%, Max DD Limit: {max_dd}%, Risk: {risk_pct}%")
+            print(f"  [Auto-Assigned Lifecycle] Mode: 2-Step Challenge (Phase 1: {p1_target}%, Phase 2: {p2_target}%)")
+            print(f"  [Auto-Assigned Risk] Challenge Risk: {ch_risk}% (Optimal Speed) | Funded Risk: {funded_risk}%")
+            print(f"  [Auto-Assigned Defaults] Daily DD Limit: {daily_dd}%, Max DD Limit: {max_dd}%")
             print(f"  [Auto-Configured Circuit Breakers] Daily CB: {daily_cb}% | Max CB: {max_cb}% (-1.0% safety cushion before hard limits)")
         else:
+            print("Select Account Lifecycle Type:")
+            print("  [1] Prop Firm Challenge / Evaluation (Default)")
+            print("  [2] Live Funded / Personal Account")
+            l_choice = input("Enter choice [1-2] (Press Enter for [1]): ").strip()
+            if l_choice == "2":
+                lifecycle = "funded"
+                ch_steps = 1
+                curr_phase = "funded"
+                p1_target = 0.0
+                p2_target = 0.0
+                ch_risk = 1.25
+                start_bal = round(float(account_info.balance), 2)
+                f_risk_in = input("Enter Funded Risk Per Trade % [Default 1.0%]: ").strip()
+                funded_risk = float(f_risk_in) if f_risk_in else 1.0
+            else:
+                lifecycle = "challenge"
+                print("\nSelect Challenge Steps:")
+                print("  [1] 1-Step Challenge (Single Target)")
+                print("  [2] 2-Step Challenge (Phase 1 + Phase 2) (Default)")
+                step_choice = input("Enter choice [1-2] (Press Enter for [2]): ").strip()
+                if step_choice == "1":
+                    ch_steps = 1
+                    curr_phase = 1
+                    p1_in = input("Enter Evaluation Target % [Default 10.0%]: ").strip()
+                    p1_target = float(p1_in) if p1_in else 10.0
+                    p2_target = 0.0
+                    print(f"  -> 1-Step Target: +{p1_target:.1f}%")
+                else:
+                    ch_steps = 2
+                    curr_phase = 1
+                    p1_in = input("Enter Phase 1 Target % [Default 8.0%]: ").strip()
+                    p1_target = float(p1_in) if p1_in else 8.0
+                    p2_in = input("Enter Phase 2 Target % [Default 5.0%]: ").strip()
+                    p2_target = float(p2_in) if p2_in else 5.0
+                    total_target = p1_target + p2_target
+                    print(f"  -> 2-Step Targets: Phase 1 = +{p1_target:.1f}%, Phase 2 = +{p2_target:.1f}% (Combined: +{total_target:.1f}%)")
+
+                start_bal = round(float(account_info.balance), 2)
+                c_risk_in = input("Enter Challenge Risk Per Trade % [Default 1.25% - Optimal Speed]: ").strip()
+                ch_risk = float(c_risk_in) if c_risk_in else 1.25
+                f_risk_in = input("Enter Funded Risk Per Trade % [Default 1.0%]: ").strip()
+                funded_risk = float(f_risk_in) if f_risk_in else 1.0
+
             daily_in = input("Enter Daily Drawdown Hard Limit % (Prop firm / Broker max) [Default 4.0%]: ").strip()
             daily_dd = float(daily_in) if daily_in else 4.0
-
             max_in = input("Enter Maximum Total Drawdown Hard Limit % (Prop firm / Broker max) [Default 8.0%]: ").strip()
             max_dd = float(max_in) if max_in else 8.0
-
             daily_cb, max_cb = prompt_circuit_breakers(daily_dd, max_dd)
 
-            risk_in = input("Enter Risk Per Trade % [Press Enter for Default 1.0%]: ").strip()
-            risk_pct = float(risk_in) if risk_in else 1.0
+        active_risk_pct = ch_risk if lifecycle == "challenge" else funded_risk
 
         cfg = {
             "login": int(account_info.login),
             "server": str(account_info.server),
             "currency": str(account_info.currency),
-            "risk_per_trade": round(risk_pct / 100.0, 4),
+            "account_lifecycle": lifecycle,
+            "challenge_steps": ch_steps,
+            "current_phase": curr_phase,
+            "phase_1_target_pct": round(p1_target, 2),
+            "phase_2_target_pct": round(p2_target, 2),
+            "phase_start_balance": round(start_bal, 2),
+            "challenge_risk_pct": round(ch_risk, 2),
+            "funded_risk_pct": round(funded_risk, 2),
+            "risk_per_trade": round(active_risk_pct / 100.0, 4),
             "daily_dd_limit_pct": round(daily_dd, 2),
             "daily_cb_pct": round(daily_cb, 2),
             "max_total_dd_pct": round(max_dd, 2),
@@ -372,8 +467,8 @@ class AccountConfigManager:
             "high_water_mark": round(float(account_info.equity), 2),
             "use_liquidity_sweep": True,
             "use_news_shield": True,
-            "use_ema_gap_filter": False,
             "entry_mode": "bar_close",
+            "strategy_version": "v1.2",
             "notifications": {
                 "active_platform": "none",
                 "telegram_bot_token": "",
@@ -387,6 +482,132 @@ class AccountConfigManager:
         self.save()
         print(f"\n[SAVED] Settings permanently remembered for Account {acc_id} in bot_accounts_config.json!\n")
         return cfg
+
+    def advance_account_phase(self, acc_id: str, new_phase: Any, new_start_bal: Optional[float] = None):
+        """Advances account from Phase 1 -> Phase 2 or to Funded, automatically syncing active risk."""
+        if acc_id not in self.accounts:
+            return
+        cfg = self.accounts[acc_id]
+        cfg["target_locked"] = False
+        if str(new_phase).lower() in ["funded", "3"]:
+            cfg["account_lifecycle"] = "funded"
+            cfg["current_phase"] = "funded"
+            cfg["risk_per_trade"] = round(cfg.get("funded_risk_pct", 1.0) / 100.0, 4)
+            print(f"\n[PHASE UPDATE] Account {acc_id} transitioned to FUNDED MODE!")
+            print(f"  * Active Risk automatically switched to Funded Risk: {cfg.get('funded_risk_pct', 1.0):.2f}%\n")
+        elif str(new_phase) == "2":
+            cfg["account_lifecycle"] = "challenge"
+            cfg["current_phase"] = 2
+            if new_start_bal is not None:
+                cfg["phase_start_balance"] = round(float(new_start_bal), 2)
+            cfg["risk_per_trade"] = round(cfg.get("challenge_risk_pct", 1.30) / 100.0, 4)
+            print(f"\n[PHASE UPDATE] Account {acc_id} advanced to CHALLENGE PHASE 2!")
+            print(f"  * Phase 2 Start Balance: ${cfg['phase_start_balance']:,.2f}")
+            print(f"  * Phase 2 Target:        +{cfg.get('phase_2_target_pct', 5.0):.1f}%")
+            print(f"  * Active Risk:           {cfg.get('challenge_risk_pct', 1.30):.2f}%\n")
+        elif str(new_phase) == "1":
+            cfg["account_lifecycle"] = "challenge"
+            cfg["current_phase"] = 1
+            if new_start_bal is not None:
+                cfg["phase_start_balance"] = round(float(new_start_bal), 2)
+            cfg["risk_per_trade"] = round(cfg.get("challenge_risk_pct", 1.30) / 100.0, 4)
+            print(f"\n[PHASE UPDATE] Account {acc_id} set to CHALLENGE PHASE 1!")
+            print(f"  * Phase 1 Start Balance: ${cfg['phase_start_balance']:,.2f}")
+            print(f"  * Phase 1 Target:        +{cfg.get('phase_1_target_pct', 8.0):.1f}%")
+            print(f"  * Active Risk:           {cfg.get('challenge_risk_pct', 1.30):.2f}%\n")
+        cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self.save()
+
+    def update_lifecycle_settings(
+        self,
+        acc_id: str,
+        lifecycle: str,
+        current_phase: Any,
+        p1_target: float,
+        p2_target: float,
+        ch_risk: float,
+        funded_risk: float,
+        start_bal: Optional[float] = None
+    ):
+        if acc_id not in self.accounts:
+            return
+        cfg = self.accounts[acc_id]
+        cfg["account_lifecycle"] = lifecycle.lower()
+        cfg["current_phase"] = current_phase
+        cfg["phase_1_target_pct"] = round(p1_target, 2)
+        cfg["phase_2_target_pct"] = round(p2_target, 2)
+        cfg["challenge_risk_pct"] = round(ch_risk, 2)
+        cfg["funded_risk_pct"] = round(funded_risk, 2)
+        if start_bal is not None:
+            cfg["phase_start_balance"] = round(float(start_bal), 2)
+        active_risk = ch_risk if cfg["account_lifecycle"] == "challenge" else funded_risk
+        cfg["risk_per_trade"] = round(active_risk / 100.0, 4)
+        cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self.save()
+
+    def format_account_dashboard(self, acc_id: str, equity: float, balance: float) -> str:
+        """Returns a prominent, structured ASCII dashboard card for existing account data."""
+        if acc_id not in self.accounts:
+            return ""
+        cfg = self.accounts[acc_id]
+        lifecycle = cfg.get("account_lifecycle", "challenge").upper()
+        curr_phase = cfg.get("current_phase", 1)
+        ch_steps = cfg.get("challenge_steps", 2)
+        start_bal = cfg.get("phase_start_balance", balance)
+        p1_tgt = cfg.get("phase_1_target_pct", 8.0)
+        p2_tgt = cfg.get("phase_2_target_pct", 5.0)
+        ch_risk = cfg.get("challenge_risk_pct", 1.25)
+        f_risk = cfg.get("funded_risk_pct", 1.0)
+        active_risk_pct = ch_risk if lifecycle == "CHALLENGE" else f_risk
+        hwm = cfg.get("high_water_mark", equity)
+
+        profit_dollar = balance - start_bal
+        profit_pct = (profit_dollar / start_bal * 100.0) if start_bal > 0 else 0.0
+
+        if lifecycle == "CHALLENGE":
+            active_target_pct = p1_tgt if str(curr_phase) == "1" else p2_tgt
+            target_dollar = start_bal * (1.0 + active_target_pct / 100.0)
+            remaining_dollar = max(0.0, target_dollar - balance)
+            phase_str = f"CHALLENGE MODE ({ch_steps}-Step | Phase {curr_phase} Active)"
+            target_desc = f"Phase {curr_phase} Target: +{active_target_pct:.1f}% (${target_dollar:,.2f})"
+            if ch_steps == 2:
+                total_tgt = p1_tgt + p2_tgt
+                target_desc += f"  [Combined: +{total_tgt:.1f}%]"
+            if balance >= target_dollar or equity >= target_dollar:
+                progress_str = f"+${profit_dollar:,.2f} (+{profit_pct:.2f}%)  >>> [TARGET REACHED! PASS READY] <<<"
+            else:
+                rem_pct = max(0.0, active_target_pct - profit_pct)
+                progress_str = f"+${profit_dollar:,.2f} (+{profit_pct:.2f}%)  [${remaining_dollar:,.2f} / {rem_pct:.2f}% to target]"
+        else:
+            phase_str = "FUNDED ACCOUNT (Capital Preservation & Bi-Weekly Payouts)"
+            target_desc = "Bi-Weekly Payout Growth Target (No Hard Ceiling)"
+            progress_str = f"Net PnL: {profit_dollar:+,.2f} ({profit_pct:+.2f}%)"
+
+        daily_limit = cfg.get("daily_dd_limit_pct", 4.0)
+        daily_cb = cfg.get("daily_cb_pct", 3.0)
+        max_limit = cfg.get("max_total_dd_pct", 8.0)
+        max_cb = cfg.get("max_cb_pct", 7.0)
+        daily_halt_eq = equity * (1.0 - daily_cb / 100.0)
+        max_halt_eq = hwm * (1.0 - max_cb / 100.0)
+
+        lines = [
+            "=" * 80,
+            "           ACCOUNT PROFILE & PROP FIRM LIFECYCLE DASHBOARD",
+            "=" * 80,
+            f"Account ID:          {acc_id} ({cfg.get('server', 'MT5')})",
+            f"Lifecycle Status:    {phase_str}",
+            f"Phase Start Balance: ${start_bal:,.2f}  |  Current Balance: ${balance:,.2f}  |  Equity: ${equity:,.2f}",
+            f"Target Milestone:    {target_desc}",
+            f"Current Progress:    {progress_str}",
+            f"Active Sizing Risk:  {active_risk_pct:.2f}% (~${balance * active_risk_pct / 100.0:,.2f})  [Challenge: {ch_risk:.2f}% | Funded: {f_risk:.2f}%]",
+            "-" * 80,
+            "Drawdown & Circuit Breaker Limits:",
+            f"  * Daily Drawdown:   Hard Limit: -{daily_limit:.1f}% | Circuit Breaker: -{daily_cb:.1f}% (Halts <= ${daily_halt_eq:,.2f})",
+            f"  * Max Total DD:     Hard Limit: -{max_limit:.1f}% | Circuit Breaker: -{max_cb:.1f}% (Halts <= ${max_halt_eq:,.2f})",
+            f"  * Peak Equity(HWM): ${hwm:,.2f}",
+            "=" * 80,
+        ]
+        return "\n".join(lines)
 
     def update_account_rules(
         self,
@@ -403,6 +624,10 @@ class AccountConfigManager:
             if max_cb is None:
                 max_cb = max(0.1, max_dd - 1.0)
             self.accounts[acc_id]["risk_per_trade"] = round(risk_pct / 100.0, 4)
+            if self.accounts[acc_id].get("account_lifecycle") == "challenge":
+                self.accounts[acc_id]["challenge_risk_pct"] = round(risk_pct, 2)
+            else:
+                self.accounts[acc_id]["funded_risk_pct"] = round(risk_pct, 2)
             self.accounts[acc_id]["daily_dd_limit_pct"] = round(daily_dd, 2)
             self.accounts[acc_id]["daily_cb_pct"] = round(daily_cb, 2)
             self.accounts[acc_id]["max_total_dd_pct"] = round(max_dd, 2)
@@ -410,8 +635,10 @@ class AccountConfigManager:
             self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
             self.save()
             print(f"\n[SUCCESS] Updated rules for Account {acc_id} successfully!")
+            print(f"  * Active Risk Per Trade: {risk_pct:.2f}%")
             print(f"  * Hard DD Limits:        Daily: {daily_dd:.1f}% | Max Total: {max_dd:.1f}%")
             print(f"  * Circuit Breakers (CB): Daily: {daily_cb:.1f}% | Max Total: {max_cb:.1f}% (Halts trading before hitting hard limits)\n")
+
 
     def get_notification_config(self, acc_id: str) -> Dict:
         if acc_id in self.accounts:
@@ -468,13 +695,10 @@ class AccountConfigManager:
         return True
 
     def toggle_ema_gap_filter(self, acc_id: str) -> bool:
-        if acc_id in self.accounts:
-            curr = self.accounts[acc_id].get("use_ema_gap_filter", True)
-            self.accounts[acc_id]["use_ema_gap_filter"] = not curr
-            self.accounts[acc_id]["last_updated"] = datetime.now(timezone.utc).isoformat()
+        if acc_id in self.accounts and "use_ema_gap_filter" in self.accounts[acc_id]:
+            del self.accounts[acc_id]["use_ema_gap_filter"]
             self.save()
-            return not curr
-        return True
+        return False
 
     def toggle_entry_mode(self, acc_id: str) -> str:
         if acc_id in self.accounts:
@@ -504,9 +728,11 @@ class InstitutionalDCCBot:
         use_news_shield: bool = True,
         use_ema_gap_filter: bool = False,
         entry_mode: str = "bar_close",
+        strategy_version: str = "v1.2",
     ):
         self.symbols = symbols
         self.risk_per_trade = risk_per_trade
+        self.strategy_version = strategy_version
 
         # Configure Hard DD Limits & Circuit Breakers (-1% safety cushion)
         self.daily_dd_limit_pct = float(daily_dd_limit_pct)
@@ -530,8 +756,8 @@ class InstitutionalDCCBot:
         self.dry_run = dry_run
         self.use_liquidity_sweep = use_liquidity_sweep
         self.use_news_shield = use_news_shield
-        self.use_ema_gap_filter = use_ema_gap_filter
-        self.entry_mode = entry_mode if entry_mode in ["pre_arm", "bar_close"] else "pre_arm"
+        self.use_ema_gap_filter = False  # Permanently nuked in v1.2 TripleGuard
+        self.entry_mode = entry_mode if entry_mode in ["pre_arm", "bar_close"] else "bar_close"
         self.news_engine = NewsEngine(cache_dir=self.config_mgr.config_path if False else None)
         self.active_news_shield: Optional[Dict] = None
         self.notified_news_activations: set = set()
@@ -571,7 +797,33 @@ class InstitutionalDCCBot:
         self.current_trading_day: Optional[datetime.date] = None
         self.daily_starting_equity: float = 0.0
         self.circuit_breaker_active: bool = False
+        self.challenge_target_reached: bool = False
+        self.challenge_target_summary: str = ""
+        self.recent_trade_outcomes: List[bool] = []
         self.nightly_audit_triggered_day: Optional[datetime.date] = None
+
+        # Persistent Account Lifecycle State (Challenge vs Funded)
+        self.account_lifecycle: str = "challenge"
+        self.current_phase: Any = 1
+        self.challenge_risk_pct: float = 1.30
+        self.funded_risk_pct: float = 1.00
+        self.target_locked: bool = False
+
+        if self.config_mgr and hasattr(mt5, 'account_info'):
+            try:
+                acc_info = mt5.account_info()
+                if acc_info:
+                    acc_cfg = self.config_mgr.accounts.get(str(acc_info.login), {})
+                    self.account_lifecycle = acc_cfg.get("account_lifecycle", "challenge")
+                    self.current_phase = acc_cfg.get("current_phase", 1)
+                    self.challenge_risk_pct = float(acc_cfg.get("challenge_risk_pct", 1.30))
+                    self.funded_risk_pct = float(acc_cfg.get("funded_risk_pct", 1.00))
+                    self.target_locked = bool(acc_cfg.get("target_locked", False))
+                    if self.target_locked:
+                        self.challenge_target_reached = True
+                        self.challenge_target_summary = f"Phase {self.current_phase}: Target Locked (Persisted from previous session)"
+            except Exception:
+                pass
 
         # Alpha weights for recursive float EMA updates
         self.alpha9 = 2.0 / (9.0 + 1.0)
@@ -692,17 +944,30 @@ class InstitutionalDCCBot:
         print(f"Max Circuit Breaker:     -{self.max_cb_pct:.1f}% (Emergency halt if equity <= ${max_cb_equity:,.2f} | {self.max_total_dd_pct - self.max_cb_pct:.1f}% safety cushion)")
         print(f"Leverage:                1:{account.leverage}")
         print(f"Monitored Assets:        {', '.join(self.symbols)}")
-        print(f"Risk Per Trade:          {self.risk_per_trade * 100:.1f}%")
+        active_gear = "GEAR 1 (CHALLENGE: Dynamic 1.30%/1.00% Risk)" if getattr(self, "account_lifecycle", "challenge") == "challenge" else "GEAR 2 (FUNDED: Static Fixed 1.00% Risk)"
+        print(f"ApexHunter Operating Gear: {active_gear}")
+        strat_ver = getattr(self, "strategy_version", "v1.2")
+        if strat_ver == "v1.2":
+            strat_str = "v1.2 APEXHUNTER (Flagship: Smart Killzone Stretch>=1.10x | Dual-Gear | TripleGuard)"
+        elif strat_ver == "v1.1":
+            strat_str = "v1.1 EARLY APEXHUNTER (TripleGuard | Hard Daily KZ Pause 09:00 & 13:00)"
+        else:
+            strat_str = "v1.0 BASELINE DCC (Standard Continuous Reference)"
+        print(f"Strategy Engine:         {strat_str}")
         print(f"Execution Mode:          {'DRY RUN (Paper Mode)' if self.dry_run else 'LIVE ORDER EXECUTION'}")
         sweep_str = "ENABLED (Turtle Soup Filter)" if self.use_liquidity_sweep else "DISABLED (Standard Baseline)"
         print(f"5M Liquidity Sweep:      {sweep_str}")
         news_str = "ENABLED (15m Blackout around USD High-Impact News)" if self.use_news_shield else "DISABLED (Off)"
         print(f"High-Impact News Shield: {news_str}")
-        gap_str = "ENABLED (Strict 0.35xATR)" if self.use_ema_gap_filter else "DISABLED (Matches Backtest)"
-        print(f"EMA Gap Filter:          {gap_str}")
         mode_str = "BAR-CLOSE (Instant Flip Entry / Matches Backtest)" if self.entry_mode == "bar_close" else "PRE-ARM (2-Min High-Frequency Tick Stream)"
         print(f"Entry Mode:              {mode_str}")
-        if not self.use_ema_gap_filter and self.entry_mode == "bar_close":
+        if strat_ver == "v1.2":
+            print(">> STATUS: [v1.2 APEXHUNTER PRODUCTION FLAGSHIP ACTIVE] <<")
+        elif strat_ver == "v1.1":
+            print(">> STATUS: [v1.1 EARLY APEXHUNTER ACTIVE] <<")
+        else:
+            print(">> STATUS: [v1.0 BASELINE DCC ACTIVE] <<")
+        if self.entry_mode == "bar_close":
             print(">> STATUS: [EXACT 1-TO-1 BACKTEST EXECUTION MATCH ACTIVE] <<")
         
         plat = self.notifier.active_platform
@@ -903,6 +1168,20 @@ class InstitutionalDCCBot:
             return mt5.ORDER_FILLING_IOC
         return mt5.ORDER_FILLING_RETURN
 
+    def get_effective_risk_pct(self, symbol: str, adx: float = 25.0, close_p: float = 0.0, h1_e20: float = 0.0, atr: float = 1.0) -> float:
+        """Determines active risk % based on ApexHunter Dual-Gear and real-time market regime."""
+        if getattr(self, "account_lifecycle", "challenge") == "challenge":
+            stretch_now = (abs(close_p - h1_e20) / (atr + 1e-9)) if (close_p > 0 and h1_e20 > 0) else 1.0
+            is_trend = (adx >= 22.0) and (stretch_now >= 0.85)
+            recent_wins = getattr(self, "recent_trade_outcomes", [])
+            rec_wr = (sum(recent_wins) / len(recent_wins)) if len(recent_wins) >= 3 else 0.50
+            if is_trend and rec_wr >= 0.50:
+                return float(getattr(self, "challenge_risk_pct", 1.30))
+            else:
+                return 1.00  # Conservative baseline in chop
+        else:
+            return float(getattr(self, "funded_risk_pct", 1.00))
+
     def calculate_lots(self, symbol: str, sl_distance: float, target_risk_dollars: Optional[float] = None) -> Tuple[float, float, float]:
         account = mt5.account_info()
         equity = account.equity if account else 5000.0
@@ -1073,6 +1352,11 @@ class InstitutionalDCCBot:
             decision = "BLOCKED_CIRCUIT_BREAKER"
             reason = f"Daily -{self.daily_cb_pct:.1f}% Circuit Breaker is ACTIVE (Hard Limit: -{self.daily_dd_limit_pct:.1f}%)"
             self.armed_states[symbol].is_armed = False
+        # 1a. Challenge Target Lock-in Protection
+        elif getattr(self, 'challenge_target_reached', False):
+            decision = "BLOCKED_CHALLENGE_TARGET_REACHED"
+            reason = f"Challenge Target Reached ({getattr(self, 'challenge_target_summary', 'Target Reached')}) - Trading Halted to Lock in Pass!"
+            self.armed_states[symbol].is_armed = False
         # 1b. Dynamic Cushion Exposure Check (Option 1: Fill-the-Cushion Sizing)
         elif is_exposure_capped:
             decision = "BLOCKED_EXPOSURE_CAP"
@@ -1098,10 +1382,22 @@ class InstitutionalDCCBot:
             self.armed_states[symbol].is_armed = False
         # 4. Dead trap hours (09:00 & 13:00 UTC)
         elif now_utc.hour in self.trap_hours_utc:
-            ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
-            decision = "SKIPPED_DEAD_HOUR"
-            reason = f"Dead Trap Hour Filter Active ({now_utc.hour:02d}:00 UTC / {ist_str} IST)"
-            self.armed_states[symbol].is_armed = False
+            strat_ver = getattr(self, "strategy_version", "v1.2")
+            if strat_ver == "v1.1":
+                # v1.1 Early ApexHunter: Hard pause on hours 09:00 and 13:00 UTC
+                ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
+                decision = "SKIPPED_DEAD_HOUR_CHOP"
+                reason = f"v1.1 Early ApexHunter: Hour {now_utc.hour:02d}:00 UTC ({ist_str} IST) in Hard Trap Zone (Paused)"
+                self.armed_states[symbol].is_armed = False
+            elif strat_ver == "v1.2":
+                # v1.2 ApexHunter: Smart Hybrid Killzone (Stretch >= 1.10x ATR allows high-momentum breakouts)
+                stretch_r = abs(close_p - h1_e20) / (atr + 1e-9)
+                if stretch_r < 1.10:
+                    ist_str = now_utc.astimezone(self.tz_ist).strftime("%H:%M")
+                    decision = "SKIPPED_DEAD_HOUR_CHOP"
+                    reason = f"v1.2 ApexHunter Smart Killzone: Hour {now_utc.hour:02d}:00 UTC ({ist_str} IST) in Trap Zone & Stretch ({stretch_r:.2f}x) < 1.10x ATR (Chop Trap)"
+                    self.armed_states[symbol].is_armed = False
+            # v1.0 Baseline DCC: No trap hour pause (hours 09:00 & 13:00 remain open)
         # 4. High-Impact News Shield Check (15m before & after USD news)
         elif self.use_news_shield and self.news_engine.get_active_news_shield(now_utc):
             active_shield = self.news_engine.get_active_news_shield(now_utc)
@@ -1112,6 +1408,28 @@ class InstitutionalDCCBot:
         elif adx < cfg.adx_min:
             decision = "SKIPPED_LOW_ADX"
             reason = f"1H ADX ({adx:.1f}) < min threshold ({cfg.adx_min:.1f})"
+            self.armed_states[symbol].is_armed = False
+        # 5b. TripleGuard Calendar Shield: Monday US Afternoon Trap Block (14:00 - 18:00 UTC)
+        elif getattr(self, "strategy_version", "v1.2") in ["v1.1", "v1.2"] and now_utc.strftime('%A') == "Monday" and now_utc.hour in [14, 15, 16, 17]:
+            decision = "SKIPPED_MONDAY_PM_TRAP"
+            reason = f"{getattr(self, 'strategy_version', 'v1.2')} Calendar Shield: Monday US Afternoon Trap Hours (14:00-18:00 UTC) Active"
+            self.armed_states[symbol].is_armed = False
+        # 5c. TripleGuard Shield 2: 1H ADX Exhaustion Ceiling (ADX <= 45.0)
+        elif getattr(self, "strategy_version", "v1.2") in ["v1.1", "v1.2"] and adx > 45.0:
+            decision = "SKIPPED_ADX_EXHAUSTION"
+            reason = f"{getattr(self, 'strategy_version', 'v1.2')} Shield 2: 1H ADX ({adx:.1f}) > 45.0 Exhaustion Ceiling"
+            self.armed_states[symbol].is_armed = False
+        # 5d. TripleGuard Shield 1: 1H Anti-Chop Floor (Stretch >= 0.40x ATR)
+        elif getattr(self, "strategy_version", "v1.2") in ["v1.1", "v1.2"] and (abs(close_p - h1_e20) / (atr + 1e-9)) < 0.40:
+            stretch_r = abs(close_p - h1_e20) / (atr + 1e-9)
+            decision = "SKIPPED_ANTI_CHOP_FLOOR"
+            reason = f"{getattr(self, 'strategy_version', 'v1.2')} Shield 1: 1H Stretch ({stretch_r:.2f}x) < 0.40x ATR Anti-Chop Floor"
+            self.armed_states[symbol].is_armed = False
+        # 5e. TripleGuard Shield 3: 5M No-Chase Guard (Chase <= 0.50x ATR)
+        elif getattr(self, "strategy_version", "v1.2") in ["v1.1", "v1.2"] and (abs(close_p - m5_e9) / (atr + 1e-9)) > 0.50:
+            chase_r = abs(close_p - m5_e9) / (atr + 1e-9)
+            decision = "SKIPPED_NO_CHASE_GUARD"
+            reason = f"{getattr(self, 'strategy_version', 'v1.2')} Shield 3: 5M Chase ({chase_r:.2f}x) > 0.50x ATR No-Chase Guard"
             self.armed_states[symbol].is_armed = False
         # 5. Bias check
         elif bias == 0 or pd.isna(bias):
@@ -1151,10 +1469,6 @@ class InstitutionalDCCBot:
                         decision = "SKIPPED_BELOW_H1_EMA20"
                         reason = f"5M Close below 1H EMA20 ({close_p:.2f} <= {h1_e20:.2f})"
                         self.armed_states[symbol].is_armed = False
-                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
-                        decision = "SKIPPED_GAP_TOO_WIDE"
-                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
-                        self.armed_states[symbol].is_armed = False
                     elif self.use_liquidity_sweep and not has_sweep:
                         decision = "SKIPPED_SWEEP_UNCONFIRMED"
                         reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
@@ -1176,10 +1490,6 @@ class InstitutionalDCCBot:
                     elif close_p >= h1_e20:
                         decision = "SKIPPED_ABOVE_H1_EMA20"
                         reason = f"5M Close above 1H EMA20 ({close_p:.2f} >= {h1_e20:.2f})"
-                        self.armed_states[symbol].is_armed = False
-                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
-                        decision = "SKIPPED_GAP_TOO_WIDE"
-                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
                         self.armed_states[symbol].is_armed = False
                     elif self.use_liquidity_sweep and not has_sweep:
                         decision = "SKIPPED_SWEEP_UNCONFIRMED"
@@ -1206,10 +1516,6 @@ class InstitutionalDCCBot:
                         decision = "SKIPPED_BELOW_VWAP"
                         reason = f"5M Close below Session VWAP ({close_p:.2f} <= {vwap:.2f})"
                         self.armed_states[symbol].is_armed = False
-                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
-                        decision = "SKIPPED_GAP_TOO_WIDE"
-                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
-                        self.armed_states[symbol].is_armed = False
                     elif self.use_liquidity_sweep and not has_sweep:
                         decision = "SKIPPED_SWEEP_UNCONFIRMED"
                         reason = f"5M Swing Low ({sw_low_5m:.2f}) liquidity sweep not satisfied"
@@ -1227,10 +1533,6 @@ class InstitutionalDCCBot:
                         decision = "SKIPPED_ABOVE_VWAP"
                         reason = f"5M Close above Session VWAP ({close_p:.2f} >= {vwap:.2f})"
                         self.armed_states[symbol].is_armed = False
-                    elif self.use_ema_gap_filter and ema_gap > (0.35 * atr):
-                        decision = "SKIPPED_GAP_TOO_WIDE"
-                        reason = f"EMA Gap ({ema_gap:.2f}) > 0.35*ATR ({0.35*atr:.2f})"
-                        self.armed_states[symbol].is_armed = False
                     elif self.use_liquidity_sweep and not has_sweep:
                         decision = "SKIPPED_SWEEP_UNCONFIRMED"
                         reason = f"5M Swing High ({sw_high_5m:.2f}) liquidity sweep not satisfied"
@@ -1241,16 +1543,22 @@ class InstitutionalDCCBot:
 
         if decision.startswith("FIRED_BAR_CLOSE"):
             target_risk = None
+            account = mt5.account_info()
+            bal_base = float(account.balance) if account else 5000.0
+            active_risk_pct = self.get_effective_risk_pct(symbol, adx, close_p, h1_e20, atr)
+            standard_risk = bal_base * (active_risk_pct / 100.0)
             if self.daily_starting_equity > 0:
-                account = mt5.account_info()
                 cur_equity = float(account.equity) if account else self.daily_starting_equity
                 cur_daily_loss = max(0.0, self.daily_starting_equity - cur_equity)
                 max_allowed_loss = self.daily_starting_equity * (self.daily_cb_pct / 100.0)
                 remaining_cushion = max(0.0, max_allowed_loss - cur_daily_loss)
-                standard_risk = (float(account.balance) if account else 5000.0) * self.risk_per_trade
                 if standard_risk > remaining_cushion and remaining_cushion > 0:
                     target_risk = remaining_cushion
-                    print(f"\n>>> [{symbol} DYNAMIC CUSHION SIZING] Standard risk (${standard_risk:.2f}) scaled to fit remaining CB cushion (${target_risk:.2f})! <<<")
+                    print(f"\n>>> [{symbol} DYNAMIC CUSHION SIZING] Standard risk (${standard_risk:.2f} @ {active_risk_pct:.2f}%) scaled to fit remaining CB cushion (${target_risk:.2f})! <<<")
+                else:
+                    target_risk = standard_risk
+            else:
+                target_risk = standard_risk
 
             tot_lots, p_lots, r_lots = self.calculate_lots(symbol, sl_dist, target_risk_dollars=target_risk)
             planned_lots = tot_lots
@@ -1304,16 +1612,22 @@ class InstitutionalDCCBot:
 
         elif decision.startswith("ARMED"):
             target_risk = None
+            account = mt5.account_info()
+            bal_base = float(account.balance) if account else 5000.0
+            active_risk_pct = self.get_effective_risk_pct(symbol, adx, close_p, h1_e20, atr)
+            standard_risk = bal_base * (active_risk_pct / 100.0)
             if self.daily_starting_equity > 0:
-                account = mt5.account_info()
                 cur_equity = float(account.equity) if account else self.daily_starting_equity
                 cur_daily_loss = max(0.0, self.daily_starting_equity - cur_equity)
                 max_allowed_loss = self.daily_starting_equity * (self.daily_cb_pct / 100.0)
                 remaining_cushion = max(0.0, max_allowed_loss - cur_daily_loss)
-                standard_risk = (float(account.balance) if account else 5000.0) * self.risk_per_trade
                 if standard_risk > remaining_cushion and remaining_cushion > 0:
                     target_risk = remaining_cushion
-                    print(f"\n>>> [{symbol} DYNAMIC CUSHION SIZING (PRE-ARM)] Standard risk (${standard_risk:.2f}) scaled to fit remaining CB cushion (${target_risk:.2f})! <<<")
+                    print(f"\n>>> [{symbol} DYNAMIC CUSHION SIZING (PRE-ARM)] Standard risk (${standard_risk:.2f} @ {active_risk_pct:.2f}%) scaled to fit remaining CB cushion (${target_risk:.2f})! <<<")
+                else:
+                    target_risk = standard_risk
+            else:
+                target_risk = standard_risk
 
             tot_lots, p_lots, r_lots = self.calculate_lots(symbol, sl_dist, target_risk_dollars=target_risk)
             planned_lots = tot_lots
@@ -1426,7 +1740,7 @@ class InstitutionalDCCBot:
 
     def process_tick_stream_last_2min(self, symbol: str, seconds_left: float):
         """High-frequency tick handler active during the last 2 minutes of the armed candle."""
-        if self.circuit_breaker_active:
+        if self.circuit_breaker_active or getattr(self, 'challenge_target_reached', False):
             self.armed_states[symbol].is_armed = False
             return
 
@@ -1752,6 +2066,11 @@ class InstitutionalDCCBot:
                     daily_cb_pct=self.daily_cb_pct
                 )
                 del self.active_positions[symbol]
+                if not hasattr(self, 'recent_trade_outcomes'):
+                    self.recent_trade_outcomes = []
+                self.recent_trade_outcomes.append(total_pnl > 0)
+                if len(self.recent_trade_outcomes) > 5:
+                    self.recent_trade_outcomes.pop(0)
                 self.write_live_state(symbol)
                 continue
 
@@ -2214,7 +2533,7 @@ class InstitutionalDCCBot:
             # 2. Trigger automated nightly reconciliation
             print(f"[NightlyReconciler] Triggering automated nightly tick replay & deal reconciliation...")
             from nightly_reconciler import NightlyReconciler
-            reconciler = NightlyReconciler(symbols=self.symbols)
+            reconciler = NightlyReconciler(symbols=self.symbols, strategy_version=self.strategy_version)
             reconciler.run(audit_date)
         except Exception as e:
             print(f"[DailySummary/NightlyReconciler] Background audit error: {e}")
@@ -2300,6 +2619,36 @@ class InstitutionalDCCBot:
                             self.notifier.notify_circuit_breaker("daily", current_equity, self.daily_cb_pct, abs(daily_pnl), hard_limit_pct=self.daily_dd_limit_pct)
                             for s in self.symbols:
                                 self.armed_states[s].is_armed = False
+
+                    # D. Challenge Target Surveillance & Lock-in Protection
+                    if self.config_mgr and acc_info:
+                        acc_id_str = str(acc_info.login)
+                        cfg_acc = self.config_mgr.accounts.get(acc_id_str, {})
+                        if cfg_acc.get("account_lifecycle") == "challenge":
+                            c_phase = cfg_acc.get("current_phase", 1)
+                            t_pct = cfg_acc.get("phase_1_target_pct", 8.0) if str(c_phase) == "1" else cfg_acc.get("phase_2_target_pct", 5.0)
+                            s_bal = cfg_acc.get("phase_start_balance", current_balance)
+                            target_val = s_bal * (1.0 + t_pct / 100.0)
+                            if (current_balance >= target_val or current_equity >= target_val) and not self.challenge_target_reached:
+                                self.challenge_target_reached = True
+                                cfg_acc["target_locked"] = True
+                                self.config_mgr.save()
+                                p_dollar = current_balance - s_bal
+                                p_pct = (p_dollar / s_bal * 100.0) if s_bal > 0 else 0.0
+                                self.challenge_target_summary = f"Phase {c_phase}: +{t_pct:.1f}% Target Hit"
+                                print("\n" + "*" * 80)
+                                print("🏆 [*** PROP FIRM EVALUATION CHALLENGE TARGET REACHED! ***]")
+                                print(f"Account:         {acc_id_str} ({cfg_acc.get('server', 'MT5')})")
+                                print(f"Milestone:       Phase {c_phase} Target (+{t_pct:.1f}%) REACHED!")
+                                print(f"Start Balance:   ${s_bal:,.2f}  ->  Current Balance: ${current_balance:,.2f}")
+                                print(f"Profit Gained:   +${p_dollar:,.2f} (+{p_pct:.2f}%)")
+                                print("PROTECTION:      Trading is HALTED to lock in your pass and prevent overtrading.")
+                                print("NEXT STEP:       Advance to next phase or Funded mode in the control menu.")
+                                print("*" * 80 + "\n")
+                                if hasattr(self.notifier, "notify_challenge_passed"):
+                                    self.notifier.notify_challenge_passed(acc_id_str, c_phase, t_pct, current_balance, p_dollar, p_pct)
+                                for s in self.symbols:
+                                    self.armed_states[s].is_armed = False
 
                 # 2. High-Impact News Shield Surveillance & State Machine
                 if self.use_news_shield:
@@ -2472,9 +2821,12 @@ class InstitutionalDCCBot:
                     elif now_utc.hour < self.entry_start_hour_utc or now_utc.hour >= self.entry_end_hour_utc:
                         t.append(" | ", style="bright_black")
                         t.append("[ASIAN RANGE - ENTRIES PAUSED]", style="bold bright_black")
+                    elif getattr(self, 'challenge_target_reached', False):
+                        t.append(" | ", style="bright_black")
+                        t.append("[🏆 CHALLENGE TARGET REACHED - TRADING HALTED]", style="bold black on bright_green")
                     elif now_utc.hour in self.trap_hours_utc:
                         t.append(" | ", style="bright_black")
-                        t.append("[TRAP HOUR - ENTRIES PAUSED]", style="bold bright_black")
+                        t.append("[TRAP HOUR - SMART KILLZONE ACTIVE (Stretch>=1.10x)]", style="bold bright_cyan")
 
                     self.live.update(t)
                     pytime.sleep(1.0 if is_weekend else 0.5)
@@ -2559,6 +2911,9 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         else:
             plat_str = "Disabled (None)"
 
+        # Existing Account Dashboard Banner
+        print(acc_mgr.format_account_dashboard(acc_id, equity, balance))
+
         print("\n" + "=" * 80)
         print("               INSTITUTIONAL DCC TRADING BOT - CONTROL MENU")
         print("=" * 80)
@@ -2574,28 +2929,25 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         sweep_str = "ENABLED (Recommended)" if use_sweep else "DISABLED (Off)"
         use_news = cfg.get("use_news_shield", True)
         news_status_str = "ENABLED (15m Blackout)" if use_news else "DISABLED (Off)"
-        use_gap = cfg.get("use_ema_gap_filter", True)
-        gap_str = "ENABLED (Strict 0.35xATR)" if use_gap else "DISABLED (Matches Backtest)"
-        entry_mode = cfg.get("entry_mode", "pre_arm")
+        entry_mode = cfg.get("entry_mode", "bar_close")
         mode_str = "BAR-CLOSE (Instant Flip Entry / Matches Backtest)" if entry_mode == "bar_close" else "PRE-ARM (2-Min Tick Stream)"
 
         print(f"  * Monitored Assets:         {', '.join(cfg.get('symbols', ['XAUUSD', 'NAS100']))}")
         print(f"  * 5M Liquidity Sweep:       {sweep_str}")
         print(f"  * High-Impact News Shield:  {news_status_str}")
-        print(f"  * EMA Gap Filter:           {gap_str}")
         print(f"  * Entry Execution Mode:     {mode_str}")
-        if not use_gap and entry_mode == "bar_close":
-            print("  * [BACKTEST MATCH STATUS]:  EXACT 1-TO-1 MATCH ACTIVE (EMA Gap OFF + Bar-Close)")
+        if entry_mode == "bar_close":
+            print("  * [BACKTEST MATCH STATUS]:  EXACT 1-TO-1 MATCH ACTIVE (v1.2 Bar-Close Parity)")
         print(f"  * Remote Notifications:     {plat_str}")
         print("-" * 80)
         print("Select Action:")
         print("  [1] Start LIVE Trading (Real MT5 Orders)")
         print("  [2] Start PAPER Trading (Dry-Run / Zero Risk Simulation)")
-        print("  [3] Edit Risk & Drawdown Rules (Change Daily DD, Max DD, Risk %)")
-        print("  [4] Configure Remote Notifications (Telegram / Discord)")
-        print(f"  [5] Toggle 5M Liquidity Sweep Confluence (Currently: {'ON' if use_sweep else 'OFF'})")
-        print(f"  [6] Toggle High-Impact News Shield (Currently: {'ON' if use_news else 'OFF'})")
-        print(f"  [7] Toggle EMA Gap Filter (Currently: {'ON (Strict)' if use_gap else 'OFF (Backtest Match)'})")
+        print("  [3] Manage Lifecycle & Risk (Challenge vs Funded, Switch Phase, Targets & Risk %)")
+        print("  [4] Edit Drawdown Rules & Circuit Breakers (Change Daily DD, Max DD, Risk %)")
+        print("  [5] Configure Remote Notifications (Telegram / Discord)")
+        print(f"  [6] Toggle 5M Liquidity Sweep Confluence (Currently: {'ON' if use_sweep else 'OFF'})")
+        print(f"  [7] Toggle High-Impact News Shield (Currently: {'ON' if use_news else 'OFF'})")
         print(f"  [8] Switch Entry Mode (Currently: {'BAR-CLOSE (Backtest)' if entry_mode == 'bar_close' else 'PRE-ARM (Tick Stream)'})")
         print("  [9] View Upcoming High-Impact Economic News")
         print("  [10] Exit")
@@ -2607,6 +2959,95 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
         elif choice == "2":
             return "dry_run", cfg
         elif choice == "3":
+            print(f"\n--- MANAGE ACCOUNT LIFECYCLE, TARGETS & RISK ({acc_id}) ---")
+            l_curr = cfg.get("account_lifecycle", "challenge").upper()
+            c_ph = cfg.get("current_phase", 1)
+            print(f"Active Lifecycle: {l_curr} (Phase: {c_ph})")
+            print(f"Challenge Risk:   {cfg.get('challenge_risk_pct', 1.25):.2f}% (Active in Challenge Mode)")
+            print(f"Funded Risk:      {cfg.get('funded_risk_pct', 1.00):.2f}% (Active in Funded Mode)")
+            print(f"Phase 1 Target:   +{cfg.get('phase_1_target_pct', 8.0):.1f}%")
+            print(f"Phase 2 Target:   +{cfg.get('phase_2_target_pct', 5.0):.1f}%")
+            print(f"Start Balance:    ${cfg.get('phase_start_balance', balance):,.2f}")
+            print("-" * 60)
+            print("Select Option:")
+            print("  [1] Advance / Switch Active Phase (Phase 1 -> Phase 2 -> Funded)")
+            print("  [2] Edit Challenge Risk % (Current: {:.2f}%)".format(cfg.get('challenge_risk_pct', 1.25)))
+            print("  [3] Edit Funded Risk % (Current: {:.2f}%)".format(cfg.get('funded_risk_pct', 1.00)))
+            print("  [4] Edit Phase Targets (% for Phase 1 & Phase 2)")
+            print("  [5] Reset Phase Starting Balance (Current: ${:,.2f})".format(cfg.get('phase_start_balance', balance)))
+            print("  [6] Return to Main Menu")
+
+            sub_c = input("Enter choice [1-6]: ").strip()
+            if sub_c == "1":
+                print("\nSelect New Active Phase:")
+                print("  [1] Challenge Phase 1")
+                print("  [2] Challenge Phase 2")
+                print("  [3] Funded Mode")
+                ph_c = input("Enter phase [1-3]: ").strip()
+                if ph_c in ["1", "2"]:
+                    sb_in = input(f"Enter Starting Balance for Phase {ph_c} [Current Balance: ${balance:,.2f}]: ").strip()
+                    sb_val = float(sb_in) if sb_in else balance
+                    acc_mgr.advance_account_phase(acc_id, ph_c, new_start_bal=sb_val)
+                elif ph_c == "3":
+                    acc_mgr.advance_account_phase(acc_id, "funded")
+                cfg = acc_mgr.accounts[acc_id]
+            elif sub_c == "2":
+                cr_in = input(f"Enter new Challenge Risk % [Current: {cfg.get('challenge_risk_pct', 1.25):.2f}%]: ").strip()
+                if cr_in:
+                    acc_mgr.update_lifecycle_settings(
+                        acc_id,
+                        lifecycle=cfg.get("account_lifecycle", "challenge"),
+                        current_phase=cfg.get("current_phase", 1),
+                        p1_target=cfg.get("phase_1_target_pct", 8.0),
+                        p2_target=cfg.get("phase_2_target_pct", 5.0),
+                        ch_risk=float(cr_in),
+                        funded_risk=cfg.get("funded_risk_pct", 1.0)
+                    )
+                    cfg = acc_mgr.accounts[acc_id]
+            elif sub_c == "3":
+                fr_in = input(f"Enter new Funded Risk % [Current: {cfg.get('funded_risk_pct', 1.00):.2f}%]: ").strip()
+                if fr_in:
+                    acc_mgr.update_lifecycle_settings(
+                        acc_id,
+                        lifecycle=cfg.get("account_lifecycle", "challenge"),
+                        current_phase=cfg.get("current_phase", 1),
+                        p1_target=cfg.get("phase_1_target_pct", 8.0),
+                        p2_target=cfg.get("phase_2_target_pct", 5.0),
+                        ch_risk=cfg.get("challenge_risk_pct", 1.25),
+                        funded_risk=float(fr_in)
+                    )
+                    cfg = acc_mgr.accounts[acc_id]
+            elif sub_c == "4":
+                p1_in = input(f"Enter Phase 1 Target % [Current: {cfg.get('phase_1_target_pct', 8.0):.1f}%]: ").strip()
+                p1_val = float(p1_in) if p1_in else cfg.get("phase_1_target_pct", 8.0)
+                p2_in = input(f"Enter Phase 2 Target % [Current: {cfg.get('phase_2_target_pct', 5.0):.1f}%]: ").strip()
+                p2_val = float(p2_in) if p2_in else cfg.get("phase_2_target_pct", 5.0)
+                acc_mgr.update_lifecycle_settings(
+                    acc_id,
+                    lifecycle=cfg.get("account_lifecycle", "challenge"),
+                    current_phase=cfg.get("current_phase", 1),
+                    p1_target=p1_val,
+                    p2_target=p2_val,
+                    ch_risk=cfg.get("challenge_risk_pct", 1.25),
+                    funded_risk=cfg.get("funded_risk_pct", 1.0)
+                )
+                cfg = acc_mgr.accounts[acc_id]
+            elif sub_c == "5":
+                sb_in = input(f"Enter New Starting Balance [Current: ${cfg.get('phase_start_balance', balance):,.2f}]: ").strip()
+                if sb_in:
+                    acc_mgr.update_lifecycle_settings(
+                        acc_id,
+                        lifecycle=cfg.get("account_lifecycle", "challenge"),
+                        current_phase=cfg.get("current_phase", 1),
+                        p1_target=cfg.get("phase_1_target_pct", 8.0),
+                        p2_target=cfg.get("phase_2_target_pct", 5.0),
+                        ch_risk=cfg.get("challenge_risk_pct", 1.25),
+                        funded_risk=cfg.get("funded_risk_pct", 1.0),
+                        start_bal=float(sb_in)
+                    )
+                    cfg = acc_mgr.accounts[acc_id]
+            input("\nPress Enter to return to main menu...")
+        elif choice == "4":
             print(f"\n--- EDIT RULES FOR ACCOUNT {acc_id} ---")
             curr_r = cfg["risk_per_trade"] * 100.0
             r_in = input(f"New Risk Per Trade % [Current: {curr_r:.1f}%] (Press Enter to keep): ").strip()
@@ -2623,22 +3064,21 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
             # Prompt Circuit Breaker auto-configuration (-1% safety cushion) or manual entry
             new_daily_cb, new_max_cb = prompt_circuit_breakers(new_d, new_m)
 
-            acc_mgr.update_account_rules(acc_id, new_r, new_d, new_m, new_daily_cb, new_max_cb)
+            acc_mgr.update_account_rules(acc_id, risk_pct=new_r, daily_dd=new_d, max_dd=new_m, daily_cb=new_daily_cb, max_cb=new_max_cb)
             cfg = acc_mgr.accounts[acc_id]
-            input("\nSettings updated! Press Enter to return to main menu...")
-        elif choice == "4":
+            input("\nPress Enter to return to main menu...")
+        elif choice == "5":
             print(f"\n--- CONFIGURE REMOTE NOTIFICATIONS FOR ACCOUNT {acc_id} ---")
-            print(f"Current Active Platform: {plat.upper()}")
-            print("  [1] Disable Notifications (None)")
-            print("  [2] Set up Telegram Bot (Bot Token & Chat ID)")
-            print("  [3] Set up Discord Webhook (Webhook URL)")
-            print("  [4] Send Test Notification on Active Channel")
-            print("  [5] Return to Main Menu")
-            n_choice = input("Select option [1-5]: ").strip()
+            print("Select Notification Service:")
+            print("  [1] Disable Notifications")
+            print("  [2] Configure Telegram Bot")
+            print("  [3] Configure Discord Webhook")
+            print("  [4] Send Test Notification")
+            n_choice = input("Enter choice [1-4]: ").strip()
 
             if n_choice == "1":
                 acc_mgr.update_notification_settings(acc_id, "none")
-                print("\n[OK] Remote notifications disabled for this account.")
+                print("\n[INFO] Remote notifications disabled.")
             elif n_choice == "2":
                 curr_tok = notif_cfg.get("telegram_bot_token", "")
                 curr_chat = notif_cfg.get("telegram_chat_id", "")
@@ -2692,23 +3132,17 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
 
             cfg = acc_mgr.accounts[acc_id]
             input("\nPress Enter to return to main menu...")
-        elif choice == "5":
+        elif choice == "6":
             new_sweep = acc_mgr.toggle_liquidity_sweep(acc_id)
             cfg = acc_mgr.accounts[acc_id]
             status_lbl = "ENABLED (Filtering low-probability chop)" if new_sweep else "DISABLED (Standard DCC baseline)"
             print(f"\n[UPDATED] 5M Liquidity Sweep Confluence is now {status_lbl.upper()}!")
             input("\nPress Enter to return to main menu...")
-        elif choice == "6":
+        elif choice == "7":
             new_shield = acc_mgr.toggle_news_shield(acc_id)
             cfg = acc_mgr.accounts[acc_id]
             status_lbl = "ENABLED (15m Blackout around USD High-Impact News)" if new_shield else "DISABLED (Off)"
             print(f"\n[UPDATED] High-Impact News Shield is now {status_lbl.upper()}!")
-            input("\nPress Enter to return to main menu...")
-        elif choice == "7":
-            new_gap = acc_mgr.toggle_ema_gap_filter(acc_id)
-            cfg = acc_mgr.accounts[acc_id]
-            status_lbl = "ENABLED (Strict 0.35xATR rejection)" if new_gap else "DISABLED (Matches Backtest)"
-            print(f"\n[UPDATED] EMA Gap Filter is now {status_lbl.upper()}!")
             input("\nPress Enter to return to main menu...")
         elif choice == "8":
             new_mode = acc_mgr.toggle_entry_mode(acc_id)
@@ -2757,8 +3191,9 @@ def main():
     parser.add_argument("--auto", action="store_true", default=False, help="Bypass interactive menu and run immediately with saved account config")
     parser.add_argument("--no-sweep", action="store_true", default=False, help="Disable 5M liquidity sweep confluence filter")
     parser.add_argument("--no-news-shield", action="store_true", default=False, help="Disable Forex Factory high-impact news blackout shield")
-    parser.add_argument("--no-ema-gap-filter", action="store_true", default=False, help="Disable 0.35*ATR EMA gap filter (matches backtest)")
+    parser.add_argument("--no-ema-gap-filter", action="store_true", default=False, help="Deprecated: EMA gap filter is permanently nuked in v1.2")
     parser.add_argument("--entry-mode", choices=["pre_arm", "bar_close"], default=None, help="Entry mode: pre_arm (tick stream) or bar_close (instant flip)")
+    parser.add_argument("--strategy-version", choices=["v1.0", "v1.1", "v1.2"], default=os.getenv("DCC_VERSION", "v1.2"), help="Strategy version: v1.0 (Baseline), v1.1 (Early ApexHunter), or v1.2 (ApexHunter Flagship)")
     args = parser.parse_args()
 
     if not mt5.initialize():
@@ -2775,6 +3210,7 @@ def main():
     if args.auto:
         cfg = acc_mgr.get_or_setup_account(account_info, auto_defaults=True)
         mode = "dry_run" if args.dry_run else "live"
+        print(acc_mgr.format_account_dashboard(str(account_info.login), account_info.equity, account_info.balance))
     else:
         mode, cfg = show_interactive_menu(account_info, acc_mgr)
 
@@ -2787,13 +3223,13 @@ def main():
     is_dry_run = True if (mode == "dry_run" or args.dry_run) else False
     use_sweep = False if args.no_sweep else cfg.get("use_liquidity_sweep", True)
     use_news = False if args.no_news_shield else cfg.get("use_news_shield", True)
-    use_gap = False if args.no_ema_gap_filter else cfg.get("use_ema_gap_filter", False)
     entry_m = args.entry_mode if args.entry_mode is not None else cfg.get("entry_mode", "bar_close")
+    strat_ver = args.strategy_version if args.strategy_version is not None else cfg.get("strategy_version", "v1.2")
 
     # Automatically persist command-line overrides to bot_accounts_config.json so they are remembered forever
     cli_changed = False
-    if args.no_ema_gap_filter and cfg.get("use_ema_gap_filter") is not False:
-        cfg["use_ema_gap_filter"] = False
+    if "use_ema_gap_filter" in cfg:
+        del cfg["use_ema_gap_filter"]
         cli_changed = True
     if args.entry_mode is not None and cfg.get("entry_mode") != args.entry_mode:
         cfg["entry_mode"] = args.entry_mode
@@ -2803,6 +3239,9 @@ def main():
         cli_changed = True
     if args.no_news_shield and cfg.get("use_news_shield") is not False:
         cfg["use_news_shield"] = False
+        cli_changed = True
+    if args.strategy_version is not None and cfg.get("strategy_version") != args.strategy_version:
+        cfg["strategy_version"] = args.strategy_version
         cli_changed = True
     if cli_changed:
         cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
@@ -2821,8 +3260,9 @@ def main():
         dry_run=is_dry_run,
         use_liquidity_sweep=use_sweep,
         use_news_shield=use_news,
-        use_ema_gap_filter=use_gap,
+        use_ema_gap_filter=False,
         entry_mode=entry_m,
+        strategy_version=strat_ver,
     )
     if bot.initialize():
         bot.run()

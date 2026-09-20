@@ -15,6 +15,10 @@ ENV/
 Data/
 data_cache/
 *.parquet
+"8 month data/"
+8 month data/
+vps fonrecis report/
+"vps fonrecis report/"
 
 # Backtest Reports & Historical Trade Logs
 reports/*.csv

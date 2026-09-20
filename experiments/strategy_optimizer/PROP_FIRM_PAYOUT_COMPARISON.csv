@@ -1,0 +1,5 @@
+Candidate,Total Trades,Eval Days,Eval Max DD,Banked Cash (80%),Funded Cycles,Max Base DD,Worst Day DD,Breaches
+1. Baseline Locked (Original Rules: Swee,470,167,15.49%,"$1,231.62",6/6,5.95%,3.24%,0
+2. Enhanced v1.2-A (Sweep ON + Stretch G,215,156,12.16%,$573.89,5/7,2.69%,2.13%,0
+3. Enhanced v1.2-B (Sweep ON + Stretch G,223,43,4.14%,$445.09,4/15,14.65%,2.80%,1
+4. Enhanced v1.2-C (Sweep ON + Stretch G,240,36,6.23%,"$1,080.38",7/15,11.31%,3.25%,1
