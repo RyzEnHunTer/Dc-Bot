@@ -5,6 +5,14 @@ import json
 import time
 
 api_key = os.getenv("OPENROUTER_API_KEY", "")
+if not api_key:
+    cfg_file = os.path.join(os.path.dirname(__file__), "..", "bot_accounts_config.json")
+    if os.path.exists(cfg_file):
+        try:
+            with open(cfg_file) as f:
+                api_key = json.load(f).get("openrouter", {}).get("api_key", "")
+        except Exception:
+            pass
 
 def test_model(model_name):
     print(f"Testing {model_name}...")

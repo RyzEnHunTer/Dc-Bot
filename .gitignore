@@ -30,6 +30,8 @@ scratch/
 bot_accounts_config.json
 test_bot_accounts_config.json
 test_accounts_config.json
+.env
+*.env
 
 # Operating System & IDE Files
 .DS_Store
