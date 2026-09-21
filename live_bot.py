@@ -2540,7 +2540,10 @@ class InstitutionalDCCBot:
 
     def run(self):
         print("\n[InstitutionalDCCBot] Starting Live Monitoring Loop...")
-        print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
+        if self.entry_mode == "bar_close":
+            print("Surveillance: 5M Bar-Close Evaluations -> Instant Twin Order Flip (Exact 1-to-1 Backtest Match)")
+        else:
+            print("Surveillance: Background 5M checks -> Armed Candle -> 2-Min Ultra-Light Tick Stream")
         print(f"Logging System: Live calculations saved to {self.audit_logger.log_dir}/market_calculations_YYYYMMDD.csv\n")
 
         self.live = Live(console=self.console, refresh_per_second=4, transient=False)
@@ -2575,6 +2578,8 @@ class InstitutionalDCCBot:
                 account = mt5.account_info()
                 if account:
                     current_equity = account.equity
+                    current_balance = account.balance
+                    acc_info = account
 
                     # A. High-Water Mark Peak Equity Tracking
                     if current_equity > self.high_water_mark:
