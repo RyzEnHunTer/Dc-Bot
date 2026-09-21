@@ -13,12 +13,26 @@ import json
 import mimetypes
 import os
 import shutil
+import ssl
 import sys
 import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Returns an SSL context that prioritizes certifi CA bundle with fallback."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 
 class StorageManager:
@@ -135,10 +149,20 @@ class StorageManager:
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    if resp.status in (200, 201):
-                        return True, f"Uploaded {filename} to Google Drive under '{folder_name}/{subfolder_date}/'."
-                    return False, f"Google Drive Webhook HTTP {resp.status}"
+                try:
+                    with urllib.request.urlopen(req, timeout=30, context=_get_ssl_context()) as resp:
+                        if resp.status in (200, 201):
+                            return True, f"Uploaded {filename} to Google Drive under '{folder_name}/{subfolder_date}/'."
+                        return False, f"Google Drive Webhook HTTP {resp.status}"
+                except Exception as upload_err:
+                    err_str = str(upload_err)
+                    if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+                        fallback_ctx = ssl._create_unverified_context()
+                        with urllib.request.urlopen(req, timeout=30, context=fallback_ctx) as resp:
+                            if resp.status in (200, 201):
+                                return True, f"Uploaded {filename} to Google Drive under '{folder_name}/{subfolder_date}/' (via fallback SSL)."
+                            return False, f"Google Drive Webhook HTTP {resp.status}"
+                    raise upload_err
             except Exception as e:
                 return False, f"Google Drive Webhook error: {e}"
 
@@ -264,10 +288,20 @@ class StorageManager:
                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                if resp.status == 200:
-                    return True, f"Sent {filename} to Telegram cloud backup."
-                return False, f"Telegram HTTP {resp.status}"
+            try:
+                with urllib.request.urlopen(req, timeout=30, context=_get_ssl_context()) as resp:
+                    if resp.status == 200:
+                        return True, f"Sent {filename} to Telegram cloud backup."
+                    return False, f"Telegram HTTP {resp.status}"
+            except Exception as send_err:
+                err_str = str(send_err)
+                if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+                    fallback_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=30, context=fallback_ctx) as resp:
+                        if resp.status == 200:
+                            return True, f"Sent {filename} to Telegram cloud backup (via fallback SSL)."
+                        return False, f"Telegram HTTP {resp.status}"
+                raise send_err
         except Exception as e:
             return False, f"Telegram sendDocument error: {e}"
 

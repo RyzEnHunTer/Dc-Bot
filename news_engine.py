@@ -15,11 +15,25 @@ from datetime import datetime, timezone, timedelta
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+import ssl
+import urllib.error
 import urllib.request
 
 DEFAULT_FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 TZ_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Returns an SSL context that prioritizes certifi CA bundle with fallback."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 
 def format_dual_time(dt: Optional[datetime] = None, include_date: bool = False) -> str:
@@ -163,19 +177,35 @@ class NewsEngine:
                 self.feed_url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) InstitutionalDCCBot/2.0"},
             )
-            with urllib.request.urlopen(req, timeout=12) as response:
-                if response.status == 200:
-                    content = response.read().decode("utf-8")
-                    raw_data = json.loads(content)
-                    self._process_raw_events(raw_data)
+            try:
+                with urllib.request.urlopen(req, timeout=12, context=_get_ssl_context()) as response:
+                    if response.status == 200:
+                        content = response.read().decode("utf-8")
+                        raw_data = json.loads(content)
+                        self._process_raw_events(raw_data)
 
-                    # Save to local disk cache
-                    with open(self.cache_file, "w", encoding="utf-8") as f:
-                        json.dump(raw_data, f, indent=2)
+                        # Save to local disk cache
+                        with open(self.cache_file, "w", encoding="utf-8") as f:
+                            json.dump(raw_data, f, indent=2)
 
-                    self.last_fetch_time = datetime.now(timezone.utc)
-                    print(f"[NewsEngine] Calendar refreshed! Loaded {len(self.events)} high-impact events.")
-                    return True
+                        self.last_fetch_time = datetime.now(timezone.utc)
+                        print(f"[NewsEngine] Calendar refreshed! Loaded {len(self.events)} high-impact events.")
+                        return True
+            except Exception as e:
+                err_str = str(e)
+                if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+                    unverified_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=12, context=unverified_ctx) as response:
+                        if response.status == 200:
+                            content = response.read().decode("utf-8")
+                            raw_data = json.loads(content)
+                            self._process_raw_events(raw_data)
+                            with open(self.cache_file, "w", encoding="utf-8") as f:
+                                json.dump(raw_data, f, indent=2)
+                            self.last_fetch_time = datetime.now(timezone.utc)
+                            print(f"[NewsEngine] Calendar refreshed (via fallback SSL)! Loaded {len(self.events)} high-impact events.")
+                            return True
+                raise e
         except Exception as e:
             print(f"[NewsEngine] Warn: Failed to fetch calendar from web: {e}")
             # Fallback to existing disk cache if available

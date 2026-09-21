@@ -20,11 +20,25 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TZ_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Returns an SSL context that prioritizes certifi CA bundle with fallback."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
 
 
 def format_dual_time(dt: Optional[datetime] = None, include_date: bool = True) -> str:
@@ -155,7 +169,7 @@ class NotificationManager:
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(req, timeout=timeout, context=_get_ssl_context()) as response:
                 if response.status == 200:
                     return True, "Telegram message sent successfully."
                 return False, f"HTTP Status {response.status}"
@@ -163,6 +177,16 @@ class NotificationManager:
             err_msg = e.read().decode("utf-8", errors="ignore")
             return False, f"Telegram HTTPError: {err_msg}"
         except Exception as e:
+            err_str = str(e)
+            if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+                try:
+                    fallback_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=timeout, context=fallback_ctx) as response:
+                        if response.status == 200:
+                            return True, "Telegram message sent successfully (via fallback SSL)."
+                        return False, f"HTTP Status {response.status}"
+                except Exception as retry_err:
+                    return False, f"Telegram SSL Error: {retry_err}"
             return False, f"Telegram Error: {e}"
 
     @staticmethod
@@ -179,7 +203,7 @@ class NotificationManager:
         req = urllib.request.Request(webhook_url, data=data, headers=headers, method="POST")
 
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(req, timeout=timeout, context=_get_ssl_context()) as response:
                 if response.status in (200, 204):
                     return True, "Discord notification sent successfully."
                 return False, f"HTTP Status {response.status}"
@@ -187,6 +211,16 @@ class NotificationManager:
             err_msg = e.read().decode("utf-8", errors="ignore")
             return False, f"Discord HTTPError: {err_msg}"
         except Exception as e:
+            err_str = str(e)
+            if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+                try:
+                    fallback_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=timeout, context=fallback_ctx) as response:
+                        if response.status in (200, 204):
+                            return True, "Discord notification sent successfully (via fallback SSL)."
+                        return False, f"HTTP Status {response.status}"
+                except Exception as retry_err:
+                    return False, f"Discord SSL Error: {retry_err}"
             return False, f"Discord Error: {e}"
 
     # -------------------------------------------------------------------------
