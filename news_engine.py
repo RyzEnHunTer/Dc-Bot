@@ -10,12 +10,15 @@ Features:
 7. Graceful Network Fallback: Automatically relies on cache during network drops
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import json
 import os
 import sys
 import ssl
+from typing import Any, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.request
 
