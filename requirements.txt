@@ -1,5 +1,21 @@
-MetaTrader5>=5.0.45
+# ==============================================================================
+# DCC Institutional Trading Bot - Python Dependencies
+# ==============================================================================
+
+# Core Broker & MT5 IPC Integration (Native Windows AMD64)
+MetaTrader5>=5.0.45; sys_platform == 'win32'
+
+# Institutional Quantitative Engines & Fast Vectorized Math
 pandas>=2.0.0
 numpy>=1.24.0
+
+# Visual Analytics & Daily Audit Chart Generation
 matplotlib>=3.7.0
+
+# Terminal Dashboards, HUD & Live Monitoring
+rich>=13.0.0
+psutil>=5.9.0
+
+# Resilient Networking, Webhooks & Secure SSL Certificate Bundles
 certifi>=2024.2.2
+requests>=2.31.0

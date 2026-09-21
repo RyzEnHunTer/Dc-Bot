@@ -134,14 +134,67 @@ def get_venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
+def prompt_platform_and_mode(args) -> Tuple[str, bool]:
+    """
+    Prompt the user or auto-detect whether to target Windows (direct install)
+    or Linux (virtual environment venv).
+    Returns: (target_os, use_venv)
+    """
+    if args.no_venv:
+        return ("windows" if sys.platform == "win32" else "linux", False)
+    if args.venv:
+        return ("windows" if sys.platform == "win32" else "linux", True)
+
+    detected_os = "Windows" if sys.platform == "win32" else "Linux / POSIX"
+
+    if args.auto:
+        # On Windows, default to direct install (no venv needed, simplest for MT5 & Windows users)
+        # On Linux, default to venv (required by PEP 668 externally-managed-environment)
+        use_venv = (sys.platform != "win32")
+        target_os = "windows" if sys.platform == "win32" else "linux"
+        print(f"  • Operating System auto-configured: {Colors.CYAN}{detected_os}{Colors.RESET}")
+        print(f"  • Environment Mode: {Colors.CYAN}{'Virtual Environment (venv)' if use_venv else 'Direct Python Installation'}{Colors.RESET}\n")
+        return (target_os, use_venv)
+
+    print(f"{Colors.BOLD}Select Your Target Operating System & Installation Mode:{Colors.RESET}")
+    print(f"  [1] Windows - Direct Install {Colors.GREEN}(Recommended for Windows VPS & PC - no venv needed){Colors.RESET}")
+    print(f"  [2] Linux / macOS - Virtual Environment {Colors.CYAN}(Required for Ubuntu / Debian / PEP 668){Colors.RESET}")
+    print(f"  [3] Windows - with Virtual Environment (venv)")
+
+    default_choice = "1" if sys.platform == "win32" else "2"
+    prompt_str = f"Enter choice [1/2/3] (Default: [{default_choice}] {detected_os}): "
+
+    try:
+        choice = input(prompt_str).strip()
+    except (EOFError, KeyboardInterrupt):
+        choice = default_choice
+
+    if not choice:
+        choice = default_choice
+
+    if choice == "1":
+        print(f"  {Colors.GREEN}[SELECTED]{Colors.RESET} Windows Direct Python Installation.\n")
+        return ("windows", False)
+    elif choice == "2":
+        print(f"  {Colors.GREEN}[SELECTED]{Colors.RESET} Linux / macOS with Virtual Environment (venv).\n")
+        return ("linux", True)
+    elif choice == "3":
+        print(f"  {Colors.GREEN}[SELECTED]{Colors.RESET} Windows with Virtual Environment (venv).\n")
+        return ("windows", True)
+    else:
+        use_v = (sys.platform != "win32")
+        print(f"  {Colors.GREEN}[SELECTED]{Colors.RESET} Default ({detected_os}).\n")
+        return ("windows" if sys.platform == "win32" else "linux", use_v)
+
+
 def setup_virtual_environment(venv_name: str, use_venv: bool, auto_mode: bool) -> Path:
     """Create or locate virtual environment, returning the target python executable."""
-    print(f"{Colors.BOLD}[Step 2/6] Configuring Virtual Environment...{Colors.RESET}")
+    print(f"{Colors.BOLD}[Step 2/6] Configuring Python Environment...{Colors.RESET}")
     venv_dir = PROJECT_ROOT / venv_name
 
     if not use_venv:
-        print(f"  • Using current Python environment: {sys.executable}")
-        print(f"  {Colors.GREEN}[OK] Virtual environment step bypassed (--no-venv).{Colors.RESET}\n")
+        print(f"  • Using direct Python environment: {Colors.CYAN}{sys.executable}{Colors.RESET}")
+        print(f"  {Colors.GREEN}[OK] Direct installation active (venv bypassed for seamless Windows MT5 execution).{Colors.RESET}\n")
         return Path(sys.executable)
 
     venv_py = get_venv_python(venv_dir)
@@ -155,7 +208,7 @@ def setup_virtual_environment(venv_name: str, use_venv: bool, auto_mode: bool) -
     try:
         builder = venv.EnvBuilder(with_pip=True, clear=False)
         builder.create(venv_dir)
-        
+
         if not venv_py.exists():
             print(f"{Colors.RED}[ERROR] Virtual environment was created, but python executable not found at: {venv_py}{Colors.RESET}")
             return Path(sys.executable)
@@ -422,30 +475,30 @@ def verify_installation(python_bin: Path, run_test_suite: bool = False) -> bool:
     verify_script = """
 import sys
 results = []
-try:
-    import MetaTrader5 as mt5
-    results.append(f"MetaTrader5: {mt5.__version__}")
-except Exception as e:
-    results.append(f"MetaTrader5: FAILED ({e})")
 
-try:
-    import pandas as pd
-    results.append(f"pandas: {pd.__version__}")
-except Exception as e:
-    results.append(f"pandas: FAILED ({e})")
+# MetaTrader 5 (Windows native)
+if sys.platform == 'win32':
+    try:
+        import MetaTrader5 as mt5
+        results.append(f"MetaTrader5: {mt5.__version__}")
+    except Exception as e:
+        results.append(f"MetaTrader5: FAILED ({e})")
+else:
+    results.append("MetaTrader5: Skipped (Non-Windows platform)")
 
-try:
-    import numpy as np
-    results.append(f"numpy: {np.__version__}")
-except Exception as e:
-    results.append(f"numpy: FAILED ({e})")
+# Core Quantitative, Visual, Dashboard & Network Dependencies
+packages_to_check = [
+    'pandas', 'numpy', 'matplotlib', 'rich', 'psutil', 'requests', 'certifi'
+]
+for pkg in packages_to_check:
+    try:
+        mod = __import__(pkg)
+        ver = getattr(mod, '__version__', 'OK')
+        results.append(f"{pkg}: {ver}")
+    except Exception as e:
+        results.append(f"{pkg}: FAILED ({e})")
 
-try:
-    import matplotlib
-    results.append(f"matplotlib: {matplotlib.__version__}")
-except Exception as e:
-    results.append(f"matplotlib: FAILED ({e})")
-
+# DCC Engine Core
 try:
     from dcc_engine import DCCEngine
     engine = DCCEngine("XAUUSD")
@@ -527,9 +580,14 @@ def main():
         help="Run non-interactively with standard defaults (recommended for automated VPS scripts)"
     )
     parser.add_argument(
+        "--venv",
+        action="store_true",
+        help="Force creation and usage of virtual environment (venv)"
+    )
+    parser.add_argument(
         "--no-venv",
         action="store_true",
-        help="Install directly into current Python environment without creating a virtualenv"
+        help="Install directly into current Python environment without creating a virtualenv (default on Windows)"
     )
     parser.add_argument(
         "--venv-name",
@@ -589,10 +647,13 @@ def main():
     if not check_python_compatibility():
         sys.exit(1)
 
-    # 2. Virtual Environment
+    # Platform & Environment Selection (Windows Direct vs Linux venv)
+    target_os, use_venv = prompt_platform_and_mode(args)
+
+    # 2. Python Environment Configuration
     python_bin = setup_virtual_environment(
         venv_name=args.venv_name,
-        use_venv=not args.no_venv,
+        use_venv=use_venv,
         auto_mode=args.auto
     )
 
@@ -614,7 +675,7 @@ def main():
     print_completion_summary(
         python_bin=python_bin,
         venv_name=args.venv_name,
-        use_venv=not args.no_venv
+        use_venv=use_venv
     )
 
     # Optional immediate launch
