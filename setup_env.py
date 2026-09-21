@@ -23,6 +23,8 @@ Usage:
 ===============================================================================
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -33,6 +35,7 @@ import subprocess
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Tuple, Optional, Dict, List, Any
 
 # Safe encoding for Windows console
 if hasattr(sys.stdout, "reconfigure"):
