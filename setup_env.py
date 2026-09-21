@@ -25,10 +25,13 @@ Usage:
 
 import os
 import sys
+import json
+import base64
 import shutil
 import venv
 import subprocess
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Safe encoding for Windows console
@@ -43,6 +46,7 @@ CONFIG_FILE = PROJECT_ROOT / "bot_accounts_config.json"
 CONFIG_EXAMPLE = PROJECT_ROOT / "bot_accounts_config.example.json"
 ENV_FILE = PROJECT_ROOT / ".env"
 ENV_EXAMPLE = PROJECT_ROOT / ".env.example"
+BUNDLE_FILENAME = "dcc_credentials_bundle.json"
 
 
 class Colors:
@@ -247,6 +251,130 @@ def setup_configuration_files(auto_mode: bool):
     print(f"  {Colors.GREEN}[OK] Configuration files ready.{Colors.RESET}\n")
 
 
+def export_credentials(output_path: Path = None, as_string: bool = False) -> bool:
+    """Export .env and bot_accounts_config.json into a single backup bundle."""
+    target_path = output_path or (PROJECT_ROOT / BUNDLE_FILENAME)
+    print(f"\n{Colors.CYAN}{Colors.BOLD}=============================================================================={Colors.RESET}")
+    print(f"{Colors.CYAN}{Colors.BOLD}                 DCC CREDENTIALS & KEYS EXPORT WIZARD{Colors.RESET}")
+    print(f"{Colors.CYAN}{Colors.BOLD}=============================================================================={Colors.RESET}\n")
+
+    bundle = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "files": {}
+    }
+
+    exported_count = 0
+    # 1. Read bot_accounts_config.json
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+            json.loads(content)  # Syntax verification
+            bundle["files"]["bot_accounts_config.json"] = content
+            print(f"  • {Colors.GREEN}[OK]{Colors.RESET} Captured {CONFIG_FILE.name}")
+            exported_count += 1
+        except Exception as e:
+            print(f"  • {Colors.RED}[WARN]{Colors.RESET} Could not read {CONFIG_FILE.name}: {e}")
+    else:
+        print(f"  • {Colors.YELLOW}[SKIP]{Colors.RESET} {CONFIG_FILE.name} does not exist.")
+
+    # 2. Read .env
+    if ENV_FILE.exists():
+        try:
+            with open(ENV_FILE, "r", encoding="utf-8") as f:
+                bundle["files"][".env"] = f.read()
+            print(f"  • {Colors.GREEN}[OK]{Colors.RESET} Captured {ENV_FILE.name}")
+            exported_count += 1
+        except Exception as e:
+            print(f"  • {Colors.RED}[WARN]{Colors.RESET} Could not read {ENV_FILE.name}: {e}")
+    else:
+        print(f"  • {Colors.YELLOW}[SKIP]{Colors.RESET} {ENV_FILE.name} does not exist.")
+
+    if exported_count == 0:
+        print(f"\n{Colors.RED}[ERROR] Neither bot_accounts_config.json nor .env were found to export.{Colors.RESET}\n")
+        return False
+
+    raw_json = json.dumps(bundle, indent=2)
+
+    if as_string:
+        b64 = base64.b64encode(raw_json.encode("utf-8")).decode("utf-8")
+        print(f"\n{Colors.BOLD}Copy this Base64 String to import on your VPS:{Colors.RESET}")
+        print("-------------------------------------------------------------------------------")
+        print(b64)
+        print("-------------------------------------------------------------------------------")
+        print(f"\n{Colors.GREEN}To restore on your new VPS, run:{Colors.RESET}")
+        print(f"  python setup_env.py --import \"{b64[:30]}...\" (paste the full string)\n")
+        return True
+
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write(raw_json)
+
+    print(f"\n{Colors.GREEN}[SUCCESS] Exported {exported_count} configuration file(s) to:{Colors.RESET}")
+    print(f"  👉 {Colors.CYAN}{target_path}{Colors.RESET}")
+    print(f"\n{Colors.BOLD}How to transfer to your VPS:{Colors.RESET}")
+    print(f"  1. Copy '{target_path.name}' to the 'Dc-Bot' folder on your VPS")
+    print(f"     (via Remote Desktop clipboard copy-paste, Google Drive, or SFTP)")
+    print(f"  2. On your VPS, simply run:")
+    print(f"     {Colors.CYAN}python setup_env.py --import {target_path.name}{Colors.RESET}")
+    print("  3. Both .env and bot_accounts_config.json will be restored instantly!\n")
+    return True
+
+
+def import_credentials(input_source: str) -> bool:
+    """Import credentials from a bundle file or base64 string and restore .env and config."""
+    print(f"\n{Colors.CYAN}{Colors.BOLD}=============================================================================={Colors.RESET}")
+    print(f"{Colors.CYAN}{Colors.BOLD}                 DCC CREDENTIALS & KEYS IMPORT WIZARD{Colors.RESET}")
+    print(f"{Colors.CYAN}{Colors.BOLD}=============================================================================={Colors.RESET}\n")
+
+    raw_content = ""
+    # Check if input is a file path
+    src_path = Path(input_source)
+    if not src_path.is_absolute():
+        src_path = PROJECT_ROOT / input_source
+
+    if src_path.exists() and src_path.is_file():
+        print(f"  • Reading bundle from file: {Colors.CYAN}{src_path.name}{Colors.RESET}")
+        with open(src_path, "r", encoding="utf-8") as f:
+            raw_content = f.read().strip()
+    else:
+        # Treat as raw string or base64
+        raw_content = input_source.strip()
+
+    # Try decode base64 if not starting with JSON {
+    if not raw_content.startswith("{"):
+        try:
+            raw_content = base64.b64decode(raw_content).decode("utf-8")
+        except Exception:
+            pass
+
+    try:
+        data = json.loads(raw_content)
+    except Exception as e:
+        print(f"{Colors.RED}[ERROR] Invalid bundle format: {e}{Colors.RESET}\n")
+        return False
+
+    files = data.get("files", {})
+    if not files:
+        print(f"{Colors.RED}[ERROR] No configuration files found in bundle.{Colors.RESET}\n")
+        return False
+
+    restored_count = 0
+    for filename, content in files.items():
+        if filename not in ("bot_accounts_config.json", ".env"):
+            print(f"  • {Colors.YELLOW}[SKIP]{Colors.RESET} Ignoring untrusted file: {filename}")
+            continue
+
+        dest = PROJECT_ROOT / filename
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"  • {Colors.GREEN}[RESTORED]{Colors.RESET} {filename} ({len(content)} bytes)")
+        restored_count += 1
+
+    print(f"\n{Colors.GREEN}[SUCCESS] Successfully restored {restored_count} configuration file(s)!{Colors.RESET}")
+    print("Your bot accounts and environment keys are now 100% active on this system.\n")
+    return True
+
+
 def scan_for_metatrader5():
     """Detect installed MetaTrader 5 terminal executables on the system."""
     print(f"{Colors.BOLD}[Step 5/6] Scanning for MetaTrader 5 Terminals...{Colors.RESET}")
@@ -423,8 +551,37 @@ def main():
         action="store_true",
         help="Start the trading bot (live_bot.py --auto) immediately after successful setup"
     )
+    parser.add_argument(
+        "--export",
+        nargs="?",
+        const="dcc_credentials_bundle.json",
+        metavar="FILE",
+        help="Export existing .env and bot_accounts_config.json into a portable backup file (default: dcc_credentials_bundle.json)"
+    )
+    parser.add_argument(
+        "--export-string",
+        action="store_true",
+        help="Print credentials bundle as a Base64 string for quick copy-pasting into terminal"
+    )
+    parser.add_argument(
+        "--import",
+        dest="import_source",
+        metavar="SOURCE",
+        help="Import credentials bundle from a file or Base64 string to restore .env and bot_accounts_config.json"
+    )
 
     args = parser.parse_args()
+
+    # Handle Export
+    if args.export or args.export_string:
+        out_path = Path(args.export) if args.export else None
+        success = export_credentials(output_path=out_path, as_string=args.export_string)
+        sys.exit(0 if success else 1)
+
+    # Handle Import
+    if args.import_source:
+        success = import_credentials(args.import_source)
+        sys.exit(0 if success else 1)
 
     print_banner()
 

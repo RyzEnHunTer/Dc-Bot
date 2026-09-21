@@ -32,6 +32,9 @@ test_bot_accounts_config.json
 test_accounts_config.json
 .env
 *.env
+*credentials_bundle*.json
+*secrets_bundle*.json
+*.bundle.json
 
 # Operating System & IDE Files
 .DS_Store
