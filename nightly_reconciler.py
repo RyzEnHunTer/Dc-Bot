@@ -425,17 +425,19 @@ class NightlyReconciler:
                 curr_diff = m5_e9 - m5_e20
 
                 if strat_ver in ("v1.1", "v1.2"):
-                    # TripleGuard Policies (Active in v1.1 Early ApexHunter and v1.2 ApexHunter Flagship)
-                    # Anti-Chop Floor Filter: |curr_diff| >= 0.02 * atr
-                    if abs(curr_diff) < (0.02 * atr):
+                    # Canonical TripleGuard Policies (v1.1 Early ApexHunter and v1.2 Flagship)
+                    # Shield 1: 1H Anti-Chop Floor (Stretch >= 0.40x ATR)
+                    stretch_ratio = abs(close_p - h1_e20) / (atr + 1e-9)
+                    if stretch_ratio < 0.40:
                         i += 1
                         continue
-                    # Blow-off Top Filter: 1H ADX <= 45.0
+                    # Shield 2: 1H ADX Exhaustion Ceiling (ADX <= 45.0)
                     if adx > 45.0:
                         i += 1
                         continue
-                    # No-Chase Exhaustion Ceiling: |close_p - h1_e20| <= 1.80 * atr
-                    if abs(close_p - h1_e20) > (1.80 * atr):
+                    # Shield 3: 5M No-Chase Guard (Chase <= 0.50x ATR)
+                    chase_ratio = abs(close_p - m5_e9) / (atr + 1e-9)
+                    if chase_ratio > 0.50:
                         i += 1
                         continue
                 else:
