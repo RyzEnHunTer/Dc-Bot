@@ -373,13 +373,15 @@ class NightlyReconciler:
                 bar = session_bars.iloc[i]
                 prev_bar = session_bars.iloc[i - 1]
                 bar_time = session_bars.index[i]
-                t_hour = bar_time.hour
+                # In bar-close mode, the 5M candle closes and executes at bar_time + 5 minutes
+                exec_time = bar_time + timedelta(minutes=5)
+                t_hour = exec_time.hour
 
                 # Strategy-specific session & killzone filters
                 strat_ver = getattr(self, "strategy_version", "v1.2")
                 if strat_ver == "v1.2":
                     # v1.2 ApexHunter Flagship: Monday PM Block (16:00 UTC and later)
-                    if bar_time.weekday() == 0 and t_hour >= 16:
+                    if exec_time.weekday() == 0 and t_hour >= 16:
                         i += 1
                         continue
 
@@ -394,7 +396,7 @@ class NightlyReconciler:
                             continue
                 elif strat_ver == "v1.1":
                     # v1.1 Early ApexHunter: Monday PM Block + Hard Killzone Pause
-                    if bar_time.weekday() == 0 and t_hour >= 16:
+                    if exec_time.weekday() == 0 and t_hour >= 16:
                         i += 1
                         continue
                     if t_hour in (9, 13):
@@ -402,8 +404,8 @@ class NightlyReconciler:
                         continue
                 # v1.0 Baseline DCC: No Monday PM block, No killzone pause
 
-                # News shield check
-                if self.news_engine.get_active_news_shield(bar_time):
+                # News shield check at candle close / execution time
+                if self.news_engine.get_active_news_shield(exec_time):
                     i += 1
                     continue
 
@@ -460,8 +462,8 @@ class NightlyReconciler:
                         i += 1
                         continue
 
-                    # Slice ticks occurring after bar close
-                    sub_ticks = ticks_df[ticks_df['time_dt'] >= bar_time]
+                    # Slice ticks occurring strictly after candle close (exact order execution point)
+                    sub_ticks = ticks_df[ticks_df['time_dt'] >= exec_time]
                     if len(sub_ticks) == 0:
                         i += 1
                         continue
