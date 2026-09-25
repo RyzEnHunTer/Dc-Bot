@@ -355,8 +355,14 @@ class AccountConfigManager:
             if "target_locked" not in cfg:
                 cfg["target_locked"] = False
                 needs_save = True
+            if "use_custom_phase_risk" not in cfg:
+                cfg["use_custom_phase_risk"] = False
+                needs_save = True
             # Dynamic sync of active risk per trade
-            active_risk_pct = cfg["challenge_risk_pct"] if cfg.get("account_lifecycle") == "challenge" else cfg["funded_risk_pct"]
+            if cfg.get("use_custom_phase_risk", False):
+                active_risk_pct = cfg["challenge_risk_pct"] if cfg.get("account_lifecycle") == "challenge" else cfg["funded_risk_pct"]
+            else:
+                active_risk_pct = 1.00
             expected_risk_dec = round(active_risk_pct / 100.0, 4)
             if cfg.get("risk_per_trade") != expected_risk_dec:
                 cfg["risk_per_trade"] = expected_risk_dec
@@ -390,6 +396,7 @@ class AccountConfigManager:
             daily_cb = 3.0
             max_dd = 8.0
             max_cb = 7.0
+            use_custom_phase_risk = False
             print(f"  [Auto-Assigned Lifecycle] Mode: 2-Step Challenge (Phase 1: {p1_target}%, Phase 2: {p2_target}%)")
             print(f"  [Auto-Assigned Risk] Challenge Risk: {ch_risk}% (Optimal Speed) | Funded Risk: {funded_risk}%")
             print(f"  [Auto-Assigned Defaults] Daily DD Limit: {daily_dd}%, Max DD Limit: {max_dd}%")
@@ -443,8 +450,10 @@ class AccountConfigManager:
             max_in = input("Enter Maximum Total Drawdown Hard Limit % (Prop firm / Broker max) [Default 8.0%]: ").strip()
             max_dd = float(max_in) if max_in else 8.0
             daily_cb, max_cb = prompt_circuit_breakers(daily_dd, max_dd)
+            custom_risk_choice = input("Enable Custom Phase-Specific Risk Scaling? (y/N) [Default 'n' -> 1.00% fixed risk]: ").strip().lower()
+            use_custom_phase_risk = (custom_risk_choice in ["y", "yes"])
 
-        active_risk_pct = ch_risk if lifecycle == "challenge" else funded_risk
+        active_risk_pct = (ch_risk if lifecycle == "challenge" else funded_risk) if use_custom_phase_risk else 1.00
 
         cfg = {
             "login": int(account_info.login),
@@ -458,6 +467,7 @@ class AccountConfigManager:
             "phase_start_balance": round(start_bal, 2),
             "challenge_risk_pct": round(ch_risk, 2),
             "funded_risk_pct": round(funded_risk, 2),
+            "use_custom_phase_risk": use_custom_phase_risk,
             "risk_per_trade": round(active_risk_pct / 100.0, 4),
             "daily_dd_limit_pct": round(daily_dd, 2),
             "daily_cb_pct": round(daily_cb, 2),
@@ -489,32 +499,36 @@ class AccountConfigManager:
             return
         cfg = self.accounts[acc_id]
         cfg["target_locked"] = False
+        use_custom = cfg.get("use_custom_phase_risk", False)
         if str(new_phase).lower() in ["funded", "3"]:
             cfg["account_lifecycle"] = "funded"
             cfg["current_phase"] = "funded"
-            cfg["risk_per_trade"] = round(cfg.get("funded_risk_pct", 1.0) / 100.0, 4)
+            active_r = cfg.get("funded_risk_pct", 1.0) if use_custom else 1.00
+            cfg["risk_per_trade"] = round(active_r / 100.0, 4)
             print(f"\n[PHASE UPDATE] Account {acc_id} transitioned to FUNDED MODE!")
-            print(f"  * Active Risk automatically switched to Funded Risk: {cfg.get('funded_risk_pct', 1.0):.2f}%\n")
+            print(f"  * Active Risk: {active_r:.2f}% (Custom Phase Risk: {'ENABLED' if use_custom else 'OFF - using default 1.00%'})\n")
         elif str(new_phase) == "2":
             cfg["account_lifecycle"] = "challenge"
             cfg["current_phase"] = 2
             if new_start_bal is not None:
                 cfg["phase_start_balance"] = round(float(new_start_bal), 2)
-            cfg["risk_per_trade"] = round(cfg.get("challenge_risk_pct", 1.30) / 100.0, 4)
+            active_r = cfg.get("challenge_risk_pct", 1.30) if use_custom else 1.00
+            cfg["risk_per_trade"] = round(active_r / 100.0, 4)
             print(f"\n[PHASE UPDATE] Account {acc_id} advanced to CHALLENGE PHASE 2!")
             print(f"  * Phase 2 Start Balance: ${cfg['phase_start_balance']:,.2f}")
             print(f"  * Phase 2 Target:        +{cfg.get('phase_2_target_pct', 5.0):.1f}%")
-            print(f"  * Active Risk:           {cfg.get('challenge_risk_pct', 1.30):.2f}%\n")
+            print(f"  * Active Risk:           {active_r:.2f}% (Custom Phase Risk: {'ENABLED' if use_custom else 'OFF - using default 1.00%'})\n")
         elif str(new_phase) == "1":
             cfg["account_lifecycle"] = "challenge"
             cfg["current_phase"] = 1
             if new_start_bal is not None:
                 cfg["phase_start_balance"] = round(float(new_start_bal), 2)
-            cfg["risk_per_trade"] = round(cfg.get("challenge_risk_pct", 1.30) / 100.0, 4)
+            active_r = cfg.get("challenge_risk_pct", 1.30) if use_custom else 1.00
+            cfg["risk_per_trade"] = round(active_r / 100.0, 4)
             print(f"\n[PHASE UPDATE] Account {acc_id} set to CHALLENGE PHASE 1!")
             print(f"  * Phase 1 Start Balance: ${cfg['phase_start_balance']:,.2f}")
             print(f"  * Phase 1 Target:        +{cfg.get('phase_1_target_pct', 8.0):.1f}%")
-            print(f"  * Active Risk:           {cfg.get('challenge_risk_pct', 1.30):.2f}%\n")
+            print(f"  * Active Risk:           {active_r:.2f}% (Custom Phase Risk: {'ENABLED' if use_custom else 'OFF - using default 1.00%'})\n")
         cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
         self.save()
 
@@ -540,10 +554,27 @@ class AccountConfigManager:
         cfg["funded_risk_pct"] = round(funded_risk, 2)
         if start_bal is not None:
             cfg["phase_start_balance"] = round(float(start_bal), 2)
-        active_risk = ch_risk if cfg["account_lifecycle"] == "challenge" else funded_risk
+        use_custom = cfg.get("use_custom_phase_risk", False)
+        active_risk = (ch_risk if cfg["account_lifecycle"] == "challenge" else funded_risk) if use_custom else 1.00
         cfg["risk_per_trade"] = round(active_risk / 100.0, 4)
         cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
         self.save()
+
+    def toggle_custom_phase_risk(self, acc_id: str) -> bool:
+        """Toggles custom phase risk scaling on/off. When off, default is 1.00% overall."""
+        if acc_id not in self.accounts:
+            return False
+        cfg = self.accounts[acc_id]
+        curr = cfg.get("use_custom_phase_risk", False)
+        cfg["use_custom_phase_risk"] = not curr
+        if cfg["use_custom_phase_risk"]:
+            active_risk = cfg.get("challenge_risk_pct", 1.30) if cfg.get("account_lifecycle") == "challenge" else cfg.get("funded_risk_pct", 1.00)
+        else:
+            active_risk = 1.00
+        cfg["risk_per_trade"] = round(active_risk / 100.0, 4)
+        cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
+        self.save()
+        return cfg["use_custom_phase_risk"]
 
     def format_account_dashboard(self, acc_id: str, equity: float, balance: float) -> str:
         """Returns a prominent, structured ASCII dashboard card for existing account data."""
@@ -558,7 +589,9 @@ class AccountConfigManager:
         p2_tgt = cfg.get("phase_2_target_pct", 5.0)
         ch_risk = cfg.get("challenge_risk_pct", 1.25)
         f_risk = cfg.get("funded_risk_pct", 1.0)
-        active_risk_pct = ch_risk if lifecycle == "CHALLENGE" else f_risk
+        use_custom = cfg.get("use_custom_phase_risk", False)
+        active_risk_pct = cfg.get("risk_per_trade", 0.01) * 100.0
+        risk_scaling_desc = f"[Scaling: ON ({active_risk_pct:.2f}%)]" if use_custom else f"[Scaling: OFF (Fixed {active_risk_pct:.2f}%)]"
         hwm = cfg.get("high_water_mark", equity)
 
         profit_dollar = balance - start_bal
@@ -599,7 +632,7 @@ class AccountConfigManager:
             f"Phase Start Balance: ${start_bal:,.2f}  |  Current Balance: ${balance:,.2f}  |  Equity: ${equity:,.2f}",
             f"Target Milestone:    {target_desc}",
             f"Current Progress:    {progress_str}",
-            f"Active Sizing Risk:  {active_risk_pct:.2f}% (~${balance * active_risk_pct / 100.0:,.2f})  [Challenge: {ch_risk:.2f}% | Funded: {f_risk:.2f}%]",
+            f"Active Sizing Risk:  {active_risk_pct:.2f}% (~${balance * active_risk_pct / 100.0:,.2f})  {risk_scaling_desc}",
             "-" * 80,
             "Drawdown & Circuit Breaker Limits:",
             f"  * Daily Drawdown:   Hard Limit: -{daily_limit:.1f}% | Circuit Breaker: -{daily_cb:.1f}% (Halts <= ${daily_halt_eq:,.2f})",
