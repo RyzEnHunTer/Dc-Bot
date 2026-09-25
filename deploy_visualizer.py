@@ -69,8 +69,12 @@ def check_files():
 
 def find_npx():
     """Locate npx executable on Windows / Unix."""
+    if sys.platform == "win32":
+        npx_cmd = shutil.which("npx.cmd")
+        if npx_cmd:
+            return npx_cmd
     npx = shutil.which("npx")
-    if npx:
+    if npx and not npx.lower().endswith(".ps1"):
         return npx
         
     candidates = [
