@@ -186,6 +186,26 @@ def test_account_lifecycle_and_target_tracking():
         assert cfg_funded["risk_per_trade"] == 0.0075
     print("[PASS] Manual Funded account setup verified with custom risk.")
 
+    # 7. Test manual 2-step challenge prompt setup with overall target and ratio
+    mock_2step = MagicMock()
+    mock_2step.login = 666333
+    mock_2step.server = "FTMO-Live"
+    mock_2step.currency = "USD"
+    mock_2step.equity = 10000.00
+    mock_2step.balance = 10000.00
+    mock_2step.leverage = 100
+
+    # Inputs: [1] Challenge -> [2] 2-Step -> Overall 14.0% -> Phase 1 8.0% -> Phase 2 6.0% -> Risk 1.30% -> Funded Risk 1.0% -> Daily DD 4% -> Max DD 8% -> Auto CB -> Enable Scaling (y)
+    inputs_2step = iter(["1", "2", "14.0", "8.0", "6.0", "1.30", "1.0", "4.0", "8.0", "1", "y"])
+    with patch("builtins.input", lambda prompt="": next(inputs_2step)):
+        cfg_2step = mgr.get_or_setup_account(mock_2step, auto_defaults=False)
+        assert cfg_2step["challenge_steps"] == 2
+        assert cfg_2step["phase_1_target_pct"] == 8.0
+        assert cfg_2step["phase_2_target_pct"] == 6.0
+        assert cfg_2step["use_custom_phase_risk"] is True
+        assert cfg_2step["risk_per_trade"] == 0.0130
+    print("[PASS] Manual 2-Step challenge setup (14% overall -> 8% Phase 1, 6% Phase 2) verified.")
+
     # Clean up test file
     if os.path.exists(TEST_CONFIG_PATH):
         os.remove(TEST_CONFIG_PATH)

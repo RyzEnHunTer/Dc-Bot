@@ -137,6 +137,29 @@ Before placing any trade:
 - **Configuration:** Can be toggled at startup or at any time in the interactive CLI menu via:  
   `[3] Manage Lifecycle & Risk` $\rightarrow$ `[6] Toggle Custom Phase Risk Scaling`.
 
+### 4.4 Prop Firm Evaluation Target Logic (1-Step vs. 2-Step Challenges)
+
+Prop firm challenges fall into two primary structures, each handled with dedicated milestone surveillance:
+
+```
+[1-Step Challenge] -> Single Target (+10%) -> [Passed on Closed Balance] -> PERMANENT HALT -> Funded Mode
+
+[2-Step Challenge] -> Phase 1 Target (+8%)  -> [Passed on Closed Balance] -> HALTED FOR THE DAY (Resets Next Day)
+                   -> Phase 2 Target (+5%)  -> [Passed on Closed Balance] -> PERMANENT HALT -> Funded Mode
+```
+
+1. **2-Step Challenge Target Split & Ratio:**
+   - During setup, the bot prompts for the **Overall Evaluation Target %** (Phase 1 + Phase 2 combined, e.g., 13.0% or 14.0%).
+   - Next, it asks for the **Phase 1 Target %** (e.g., 8.0%) and automatically calculates and prompts for the **Phase 2 Target %** (e.g., 5.0% or 6.0%) so the exact milestone ratio is maintained.
+
+2. **Realized Closed Balance vs. Floating Equity:**
+   - **Crucial Institutional Rule:** The bot monitors target milestone achievement **strictly on REALIZED CLOSED BALANCE** (`current_balance >= target_val`).
+   - Floating equity spikes during open trades are **never** treated as passing the evaluation. A trade must officially close and book its profit into the MT5 account balance before any target milestone is declared.
+
+3. **Phase 1 vs. Phase 2 Halting Behavior:**
+   - **Phase 1 Target Passed:** When Phase 1 closed balance meets or exceeds the target, trading is **halted for the remainder of that trading day** to lock in profits and prevent overtrading. It does **NOT** permanently lock the bot (`target_locked = False`). On the next trading day (00:00 UTC rollover), setup arming is automatically re-enabled (allowing additional micro-trades if the prop firm requires minimum trading days) until the trader advances the account to Phase 2.
+   - **Phase 2 (or 1-Step Final) Passed:** Reaching the final milestone means the evaluation is 100% completed. The bot locks permanently (`target_locked = True`), disarms all symbols, and displays a milestone pass banner so the trader can submit the account for funded status without any risk of further drawdowns.
+
 ---
 
 ## 5. Nightly Forensic Reconciler & Audit Findings

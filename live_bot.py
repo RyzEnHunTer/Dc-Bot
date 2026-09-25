@@ -429,12 +429,15 @@ class AccountConfigManager:
                 else:
                     ch_steps = 2
                     curr_phase = 1
+                    tot_in = input("Enter Overall Evaluation Target % (Phase 1 + Phase 2 combined) [Default 13.0%]: ").strip()
+                    overall_target = float(tot_in) if tot_in else 13.0
                     p1_in = input("Enter Phase 1 Target % [Default 8.0%]: ").strip()
                     p1_target = float(p1_in) if p1_in else 8.0
-                    p2_in = input("Enter Phase 2 Target % [Default 5.0%]: ").strip()
-                    p2_target = float(p2_in) if p2_in else 5.0
+                    calc_p2 = max(0.0, round(overall_target - p1_target, 2))
+                    p2_in = input(f"Enter Phase 2 Target % [Default {calc_p2:.1f}% based on overall {overall_target:.1f}%]: ").strip()
+                    p2_target = float(p2_in) if p2_in else calc_p2
                     total_target = p1_target + p2_target
-                    print(f"  -> 2-Step Targets: Phase 1 = +{p1_target:.1f}%, Phase 2 = +{p2_target:.1f}% (Combined: +{total_target:.1f}%)")
+                    print(f"  -> 2-Step Configuration: Overall Target = +{total_target:.1f}% | Phase 1 = +{p1_target:.1f}%, Phase 2 = +{p2_target:.1f}%")
 
                 start_bal = round(float(account_info.balance), 2)
                 c_risk_in = input("Enter Challenge Risk Per Trade % [Default 1.25% - Optimal Speed]: ").strip()
@@ -603,8 +606,9 @@ class AccountConfigManager:
             if ch_steps == 2:
                 total_tgt = p1_tgt + p2_tgt
                 target_desc += f"  [Combined: +{total_tgt:.1f}%]"
-            if balance >= target_dollar or equity >= target_dollar:
-                progress_str = f"+${profit_dollar:,.2f} (+{profit_pct:.2f}%)  >>> [TARGET REACHED! PASS READY] <<<"
+            if balance >= target_dollar:
+                pass_label = "CHALLENGE PASSED! FUNDED READY" if (ch_steps == 1 or str(curr_phase) in ["2", "funded"]) else f"PHASE {curr_phase} TARGET REACHED (CLOSED BALANCE)"
+                progress_str = f"+${profit_dollar:,.2f} (+{profit_pct:.2f}%)  >>> [{pass_label}] <<<"
             else:
                 rem_pct = max(0.0, active_target_pct - profit_pct)
                 progress_str = f"+${profit_dollar:,.2f} (+{profit_pct:.2f}%)  [${remaining_dollar:,.2f} / {rem_pct:.2f}% to target]"
@@ -2597,6 +2601,9 @@ class InstitutionalDCCBot:
                         self.daily_starting_equity = account.equity
                     self.circuit_breaker_active = False
                     self.session_notified = {}
+                    # Reset Phase 1 daily target halt on new trading day (Phase 2 remains locked if target_locked is True)
+                    if not getattr(self, 'target_locked', False):
+                        self.challenge_target_reached = False
                     print(f"\n[NEW TRADING DAY: {active_trading_date}] Circuit Breaker Reset. Starting Equity Anchor: ${self.daily_starting_equity:,.2f}")
 
                 # 0.1 Check automated session-close audit trigger (19:05 UTC / 00:35 IST)
@@ -2661,25 +2668,49 @@ class InstitutionalDCCBot:
                         cfg_acc = self.config_mgr.accounts.get(acc_id_str, {})
                         if cfg_acc.get("account_lifecycle") == "challenge":
                             c_phase = cfg_acc.get("current_phase", 1)
+                            ch_steps = cfg_acc.get("challenge_steps", 2)
+                            is_final_phase = (ch_steps == 1) or (str(c_phase) in ["2", "funded"])
                             t_pct = cfg_acc.get("phase_1_target_pct", 8.0) if str(c_phase) == "1" else cfg_acc.get("phase_2_target_pct", 5.0)
                             s_bal = cfg_acc.get("phase_start_balance", current_balance)
                             target_val = s_bal * (1.0 + t_pct / 100.0)
-                            if (current_balance >= target_val or current_equity >= target_val) and not self.challenge_target_reached:
+
+                            # Strictly evaluate on CLOSED BALANCE (never floating equity!)
+                            if current_balance >= target_val and not self.challenge_target_reached:
                                 self.challenge_target_reached = True
-                                cfg_acc["target_locked"] = True
-                                self.config_mgr.save()
                                 p_dollar = current_balance - s_bal
                                 p_pct = (p_dollar / s_bal * 100.0) if s_bal > 0 else 0.0
-                                self.challenge_target_summary = f"Phase {c_phase}: +{t_pct:.1f}% Target Hit"
-                                print("\n" + "*" * 80)
-                                print("🏆 [*** PROP FIRM EVALUATION CHALLENGE TARGET REACHED! ***]")
-                                print(f"Account:         {acc_id_str} ({cfg_acc.get('server', 'MT5')})")
-                                print(f"Milestone:       Phase {c_phase} Target (+{t_pct:.1f}%) REACHED!")
-                                print(f"Start Balance:   ${s_bal:,.2f}  ->  Current Balance: ${current_balance:,.2f}")
-                                print(f"Profit Gained:   +${p_dollar:,.2f} (+{p_pct:.2f}%)")
-                                print("PROTECTION:      Trading is HALTED to lock in your pass and prevent overtrading.")
-                                print("NEXT STEP:       Advance to next phase or Funded mode in the control menu.")
-                                print("*" * 80 + "\n")
+
+                                if is_final_phase:
+                                    # Phase 2 (or 1-Step): Final Challenge Passed! Halt permanently.
+                                    cfg_acc["target_locked"] = True
+                                    self.target_locked = True
+                                    self.config_mgr.save()
+                                    self.challenge_target_summary = f"Phase {c_phase}: +{t_pct:.1f}% Final Target Hit (Challenge Passed)"
+                                    print("\n" + "*" * 80)
+                                    print("🏆 [*** PROP FIRM EVALUATION CHALLENGE FULLY PASSED! ***]")
+                                    print(f"Account:         {acc_id_str} ({cfg_acc.get('server', 'MT5')})")
+                                    print(f"Final Milestone: Phase {c_phase} Target (+{t_pct:.1f}%) REACHED on Closed Balance!")
+                                    print(f"Start Balance:   ${s_bal:,.2f}  ->  Final Balance: ${current_balance:,.2f}")
+                                    print(f"Profit Gained:   +${p_dollar:,.2f} (+{p_pct:.2f}%)")
+                                    print("PROTECTION:      Trading is PERMANENTLY HALTED. Submit account for funded phase!")
+                                    print("*" * 80 + "\n")
+                                else:
+                                    # Phase 1: Only halt trading for today to lock in daily gains.
+                                    # NOT permanently locked, allowing continuation or Phase 2 transition!
+                                    cfg_acc["target_locked"] = False
+                                    self.target_locked = False
+                                    self.config_mgr.save()
+                                    self.challenge_target_summary = f"Phase 1: +{t_pct:.1f}% Target Hit - Trading Halted Today"
+                                    print("\n" + "*" * 80)
+                                    print("🏆 [*** PHASE 1 TARGET REACHED ON CLOSED BALANCE! ***]")
+                                    print(f"Account:         {acc_id_str} ({cfg_acc.get('server', 'MT5')})")
+                                    print(f"Milestone:       Phase 1 Target (+{t_pct:.1f}%) REACHED on Closed Balance!")
+                                    print(f"Start Balance:   ${s_bal:,.2f}  ->  Current Balance: ${current_balance:,.2f}")
+                                    print(f"Profit Gained:   +${p_dollar:,.2f} (+{p_pct:.2f}%)")
+                                    print("PROTECTION:      Trading HALTED FOR THE DAY to secure profits and prevent overtrading.")
+                                    print("NEXT TRADING DAY: Trading will resume tomorrow, or advance to Phase 2 in the menu.")
+                                    print("*" * 80 + "\n")
+
                                 if hasattr(self.notifier, "notify_challenge_passed"):
                                     self.notifier.notify_challenge_passed(acc_id_str, c_phase, t_pct, current_balance, p_dollar, p_pct)
                                 for s in self.symbols:
@@ -3054,10 +3085,14 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
                     )
                     cfg = acc_mgr.accounts[acc_id]
             elif sub_c == "4":
+                curr_tot = cfg.get('phase_1_target_pct', 8.0) + cfg.get('phase_2_target_pct', 5.0)
+                tot_in = input(f"Enter Overall Target % (Phase 1 + Phase 2 combined) [Current: {curr_tot:.1f}%]: ").strip()
+                tot_val = float(tot_in) if tot_in else curr_tot
                 p1_in = input(f"Enter Phase 1 Target % [Current: {cfg.get('phase_1_target_pct', 8.0):.1f}%]: ").strip()
                 p1_val = float(p1_in) if p1_in else cfg.get("phase_1_target_pct", 8.0)
-                p2_in = input(f"Enter Phase 2 Target % [Current: {cfg.get('phase_2_target_pct', 5.0):.1f}%]: ").strip()
-                p2_val = float(p2_in) if p2_in else cfg.get("phase_2_target_pct", 5.0)
+                calc_p2 = max(0.0, round(tot_val - p1_val, 2))
+                p2_in = input(f"Enter Phase 2 Target % [Default: {calc_p2:.1f}% based on overall {tot_val:.1f}%]: ").strip()
+                p2_val = float(p2_in) if p2_in else calc_p2
                 acc_mgr.update_lifecycle_settings(
                     acc_id,
                     lifecycle=cfg.get("account_lifecycle", "challenge"),
