@@ -61,9 +61,10 @@ def test_account_config_manager():
     assert cfg["phase_2_target_pct"] == 5.0
     assert cfg["challenge_risk_pct"] == 1.25
     assert cfg["funded_risk_pct"] == 1.0
-    assert cfg["risk_per_trade"] == 0.0125
+    assert cfg["use_custom_phase_risk"] is False
+    assert cfg["risk_per_trade"] == 0.0100  # Default 1.00% fixed risk
     assert cfg["high_water_mark"] == 5417.64
-    print("[PASS] New account detection & auto-defaults saved (Challenge 2-Step, 1.25% Risk, Daily DD: 4%, CB: 3%).")
+    print("[PASS] New account detection & auto-defaults saved (Challenge 2-Step, 1.00% Default Fixed Risk, Daily DD: 4%, CB: 3%).")
 
     # 2. Verify persistence on disk
     assert os.path.exists(TEST_CONFIG_PATH)
@@ -117,9 +118,13 @@ def test_account_lifecycle_and_target_tracking():
     cfg = mgr.get_or_setup_account(mock_acc, auto_defaults=True)
     assert cfg["account_lifecycle"] == "challenge"
     assert cfg["current_phase"] == 1
-    assert cfg["risk_per_trade"] == 0.0125  # Challenge 1.25%
+    assert cfg["use_custom_phase_risk"] is False
+    assert cfg["risk_per_trade"] == 0.0100  # Default fixed 1.00%
 
-    # 2. Test dashboard generation
+    # 2. Test phase risk scaling toggle & dashboard generation
+    mgr.toggle_custom_phase_risk("999123")
+    assert mgr.accounts["999123"]["use_custom_phase_risk"] is True
+    assert mgr.accounts["999123"]["risk_per_trade"] == 0.0125  # Scaled to Challenge 1.25%
     dash = mgr.format_account_dashboard("999123", equity=5200.00, balance=5200.00)
     assert "CHALLENGE MODE (2-Step | Phase 1 Active)" in dash
     assert "Phase 1 Target: +8.0%" in dash
@@ -152,12 +157,13 @@ def test_account_lifecycle_and_target_tracking():
     mock_1step.balance = 10000.00
     mock_1step.leverage = 100
 
-    # Inputs: [1] Challenge -> [1] 1-Step -> Target 10% -> Risk 1.25% -> Funded Risk 1.0% -> Daily DD 4% -> Max DD 8% -> Auto CB
-    inputs_1step = iter(["1", "1", "10.0", "1.25", "1.0", "4.0", "8.0", "1"])
+    # Inputs: [1] Challenge -> [1] 1-Step -> Target 10% -> Risk 1.25% -> Funded Risk 1.0% -> Daily DD 4% -> Max DD 8% -> Auto CB -> Enable Scaling (y)
+    inputs_1step = iter(["1", "1", "10.0", "1.25", "1.0", "4.0", "8.0", "1", "y"])
     with patch("builtins.input", lambda prompt="": next(inputs_1step)):
         cfg_1step = mgr.get_or_setup_account(mock_1step, auto_defaults=False)
         assert cfg_1step["challenge_steps"] == 1
         assert cfg_1step["phase_1_target_pct"] == 10.0
+        assert cfg_1step["use_custom_phase_risk"] is True
         assert cfg_1step["risk_per_trade"] == 0.0125
     print("[PASS] Manual 1-Step challenge setup verified.")
 
@@ -170,12 +176,13 @@ def test_account_lifecycle_and_target_tracking():
     mock_funded.balance = 25000.00
     mock_funded.leverage = 100
 
-    # Inputs: [2] Funded -> Funded Risk 0.75% -> Daily DD 4% -> Max DD 8% -> Auto CB
-    inputs_funded = iter(["2", "0.75", "4.0", "8.0", "1"])
+    # Inputs: [2] Funded -> Funded Risk 0.75% -> Daily DD 4% -> Max DD 8% -> Auto CB -> Enable Scaling (y)
+    inputs_funded = iter(["2", "0.75", "4.0", "8.0", "1", "y"])
     with patch("builtins.input", lambda prompt="": next(inputs_funded)):
         cfg_funded = mgr.get_or_setup_account(mock_funded, auto_defaults=False)
         assert cfg_funded["account_lifecycle"] == "funded"
         assert cfg_funded["funded_risk_pct"] == 0.75
+        assert cfg_funded["use_custom_phase_risk"] is True
         assert cfg_funded["risk_per_trade"] == 0.0075
     print("[PASS] Manual Funded account setup verified with custom risk.")
 

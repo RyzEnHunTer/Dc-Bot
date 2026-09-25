@@ -352,15 +352,12 @@ class AccountConfigManager:
             if "funded_risk_pct" not in cfg:
                 cfg["funded_risk_pct"] = 1.0
                 needs_save = True
-            if "target_locked" not in cfg:
-                cfg["target_locked"] = False
-                needs_save = True
             if "use_custom_phase_risk" not in cfg:
                 cfg["use_custom_phase_risk"] = False
                 needs_save = True
             # Dynamic sync of active risk per trade
             if cfg.get("use_custom_phase_risk", False):
-                active_risk_pct = cfg["challenge_risk_pct"] if cfg.get("account_lifecycle") == "challenge" else cfg["funded_risk_pct"]
+                active_risk_pct = cfg.get("challenge_risk_pct", 1.25) if cfg.get("account_lifecycle") == "challenge" else cfg.get("funded_risk_pct", 1.0)
             else:
                 active_risk_pct = 1.00
             expected_risk_dec = round(active_risk_pct / 100.0, 4)
@@ -3013,9 +3010,10 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
             print("  [3] Edit Funded Risk % (Current: {:.2f}%)".format(cfg.get('funded_risk_pct', 1.00)))
             print("  [4] Edit Phase Targets (% for Phase 1 & Phase 2)")
             print("  [5] Reset Phase Starting Balance (Current: ${:,.2f})".format(cfg.get('phase_start_balance', balance)))
-            print("  [6] Return to Main Menu")
+            print("  [6] Toggle Custom Phase Risk Scaling (Currently: {})".format('ENABLED' if cfg.get('use_custom_phase_risk', False) else 'OFF (Fixed 1.00%)'))
+            print("  [7] Return to Main Menu")
 
-            sub_c = input("Enter choice [1-6]: ").strip()
+            sub_c = input("Enter choice [1-7]: ").strip()
             if sub_c == "1":
                 print("\nSelect New Active Phase:")
                 print("  [1] Challenge Phase 1")
@@ -3084,6 +3082,12 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
                         start_bal=float(sb_in)
                     )
                     cfg = acc_mgr.accounts[acc_id]
+            elif sub_c == "6":
+                is_on = acc_mgr.toggle_custom_phase_risk(acc_id)
+                cfg = acc_mgr.accounts[acc_id]
+                status_str = "ENABLED" if is_on else "OFF (Fixed 1.00%)"
+                print(f"\n[PHASE RISK TOGGLED] Custom Phase-Specific Risk Scaling is now: {status_str}")
+                print(f"  * Active Sizing Risk: {cfg.get('risk_per_trade', 0.01)*100.0:.2f}%\n")
             input("\nPress Enter to return to main menu...")
         elif choice == "4":
             print(f"\n--- EDIT RULES FOR ACCOUNT {acc_id} ---")
