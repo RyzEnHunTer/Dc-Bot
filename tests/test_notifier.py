@@ -297,6 +297,61 @@ class TestNotificationEngine(unittest.TestCase):
 
         print("[PASS] Weekend market closure and Friday day persistence verified across full cycle.")
 
+    def test_challenge_passed_and_phase_transition_notifications(self):
+        """Verifies distinct formatting for Phase 1 vs Final Phase and Phase Transitions."""
+        nm = NotificationManager(config={"active_platform": "discord", "discord_webhook_url": "https://dummy"})
+
+        # 1. Phase 1 passed (Daily lock-in halt, green embed)
+        nm.notify_challenge_passed(
+            account_id="123456",
+            phase=1,
+            target_pct=8.0,
+            current_balance=5400.0,
+            profit_dollar=400.0,
+            profit_pct=8.0,
+            is_final=False,
+            server="FTMO-Demo"
+        )
+        _, item_p1 = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("PHASE 1 EVALUATION TARGET PASSED", item_p1["text"])
+        self.assertIn("TRADING HALTED FOR TODAY", item_p1["text"])
+        self.assertEqual(item_p1["embed"]["color"], 0x00D084)
+
+        # 2. Phase 2 / Final Challenge passed (Permanent halt, gold embed)
+        nm.notify_challenge_passed(
+            account_id="123456",
+            phase=2,
+            target_pct=5.0,
+            current_balance=5670.0,
+            profit_dollar=270.0,
+            profit_pct=5.0,
+            is_final=True,
+            server="FTMO-Demo"
+        )
+        _, item_final = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("PROP FIRM CHALLENGE FULLY PASSED", item_final["text"])
+        self.assertIn("TRADING PERMANENTLY HALTED", item_final["text"])
+        self.assertIn("FUNDED ACCOUNT", item_final["text"])
+        self.assertEqual(item_final["embed"]["color"], 0xFFD700)
+
+        # 3. Phase Transition Notification (Blue embed)
+        nm.notify_phase_transition(
+            account_id="123456",
+            new_phase_name="Challenge Phase 2",
+            start_balance=5400.0,
+            target_pct=5.0,
+            active_risk_pct=1.30,
+            is_custom_risk_on=True,
+            server="FTMO-Demo"
+        )
+        _, item_trans = nm.msg_queue.get(timeout=1.0)
+        self.assertIn("ACCOUNT LIFECYCLE PHASE UPDATED", item_trans["text"])
+        self.assertIn("CHALLENGE PHASE 2", item_trans["text"])
+        self.assertIn("$5,400.00", item_trans["text"])
+        self.assertEqual(item_trans["embed"]["color"], 0x3498DB)
+
+        print("[PASS] Challenge passing (Phase 1 vs Final) and Phase Transition notifications verified.")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -493,18 +493,24 @@ class AccountConfigManager:
         print(f"\n[SAVED] Settings permanently remembered for Account {acc_id} in bot_accounts_config.json!\n")
         return cfg
 
-    def advance_account_phase(self, acc_id: str, new_phase: Any, new_start_bal: Optional[float] = None):
+    def advance_account_phase(self, acc_id: str, new_phase: Any, new_start_bal: Optional[float] = None, notifier: Optional[Any] = None):
         """Advances account from Phase 1 -> Phase 2 or to Funded, automatically syncing active risk."""
         if acc_id not in self.accounts:
             return
         cfg = self.accounts[acc_id]
         cfg["target_locked"] = False
         use_custom = cfg.get("use_custom_phase_risk", False)
+        phase_name = ""
+        target_pct = 0.0
+        start_bal = cfg.get("phase_start_balance", 0.0)
+
         if str(new_phase).lower() in ["funded", "3"]:
             cfg["account_lifecycle"] = "funded"
             cfg["current_phase"] = "funded"
             active_r = cfg.get("funded_risk_pct", 1.0) if use_custom else 1.00
             cfg["risk_per_trade"] = round(active_r / 100.0, 4)
+            phase_name = "Funded Mode"
+            target_pct = 0.0
             print(f"\n[PHASE UPDATE] Account {acc_id} transitioned to FUNDED MODE!")
             print(f"  * Active Risk: {active_r:.2f}% (Custom Phase Risk: {'ENABLED' if use_custom else 'OFF - using default 1.00%'})\n")
         elif str(new_phase) == "2":
@@ -512,8 +518,11 @@ class AccountConfigManager:
             cfg["current_phase"] = 2
             if new_start_bal is not None:
                 cfg["phase_start_balance"] = round(float(new_start_bal), 2)
+            start_bal = cfg.get("phase_start_balance", 0.0)
             active_r = cfg.get("challenge_risk_pct", 1.30) if use_custom else 1.00
             cfg["risk_per_trade"] = round(active_r / 100.0, 4)
+            phase_name = "Challenge Phase 2"
+            target_pct = cfg.get("phase_2_target_pct", 5.0)
             print(f"\n[PHASE UPDATE] Account {acc_id} advanced to CHALLENGE PHASE 2!")
             print(f"  * Phase 2 Start Balance: ${cfg['phase_start_balance']:,.2f}")
             print(f"  * Phase 2 Target:        +{cfg.get('phase_2_target_pct', 5.0):.1f}%")
@@ -523,14 +532,32 @@ class AccountConfigManager:
             cfg["current_phase"] = 1
             if new_start_bal is not None:
                 cfg["phase_start_balance"] = round(float(new_start_bal), 2)
+            start_bal = cfg.get("phase_start_balance", 0.0)
             active_r = cfg.get("challenge_risk_pct", 1.30) if use_custom else 1.00
             cfg["risk_per_trade"] = round(active_r / 100.0, 4)
+            phase_name = "Challenge Phase 1"
+            target_pct = cfg.get("phase_1_target_pct", 8.0)
             print(f"\n[PHASE UPDATE] Account {acc_id} set to CHALLENGE PHASE 1!")
             print(f"  * Phase 1 Start Balance: ${cfg['phase_start_balance']:,.2f}")
             print(f"  * Phase 1 Target:        +{cfg.get('phase_1_target_pct', 8.0):.1f}%")
             print(f"  * Active Risk:           {active_r:.2f}% (Custom Phase Risk: {'ENABLED' if use_custom else 'OFF - using default 1.00%'})\n")
         cfg["last_updated"] = datetime.now(timezone.utc).isoformat()
         self.save()
+
+        # Notify remote platforms if notifier is provided
+        if notifier and hasattr(notifier, "notify_phase_transition"):
+            try:
+                notifier.notify_phase_transition(
+                    account_id=acc_id,
+                    new_phase_name=phase_name,
+                    start_balance=start_bal,
+                    target_pct=target_pct,
+                    active_risk_pct=cfg.get("risk_per_trade", 0.01) * 100.0,
+                    is_custom_risk_on=use_custom,
+                    server=cfg.get("server", "MT5")
+                )
+            except Exception:
+                pass
 
     def update_lifecycle_settings(
         self,
@@ -2712,7 +2739,16 @@ class InstitutionalDCCBot:
                                     print("*" * 80 + "\n")
 
                                 if hasattr(self.notifier, "notify_challenge_passed"):
-                                    self.notifier.notify_challenge_passed(acc_id_str, c_phase, t_pct, current_balance, p_dollar, p_pct)
+                                    self.notifier.notify_challenge_passed(
+                                        account_id=acc_id_str,
+                                        phase=c_phase,
+                                        target_pct=t_pct,
+                                        current_balance=current_balance,
+                                        profit_dollar=p_dollar,
+                                        profit_pct=p_pct,
+                                        is_final=is_final_phase,
+                                        server=str(cfg_acc.get('server', 'MT5'))
+                                    )
                                 for s in self.symbols:
                                     self.armed_states[s].is_armed = False
 
@@ -3051,12 +3087,13 @@ def show_interactive_menu(account_info, acc_mgr: AccountConfigManager) -> Tuple[
                 print("  [2] Challenge Phase 2")
                 print("  [3] Funded Mode")
                 ph_c = input("Enter phase [1-3]: ").strip()
+                notifier = NotificationManager(cfg.get("notifications", {}))
                 if ph_c in ["1", "2"]:
                     sb_in = input(f"Enter Starting Balance for Phase {ph_c} [Current Balance: ${balance:,.2f}]: ").strip()
                     sb_val = float(sb_in) if sb_in else balance
-                    acc_mgr.advance_account_phase(acc_id, ph_c, new_start_bal=sb_val)
+                    acc_mgr.advance_account_phase(acc_id, ph_c, new_start_bal=sb_val, notifier=notifier)
                 elif ph_c == "3":
-                    acc_mgr.advance_account_phase(acc_id, "funded")
+                    acc_mgr.advance_account_phase(acc_id, "funded", notifier=notifier)
                 cfg = acc_mgr.accounts[acc_id]
             elif sub_c == "2":
                 cr_in = input(f"Enter new Challenge Risk % [Current: {cfg.get('challenge_risk_pct', 1.25):.2f}%]: ").strip()

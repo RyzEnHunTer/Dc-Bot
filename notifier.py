@@ -641,23 +641,120 @@ class NotificationManager:
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 
-    def notify_challenge_passed(self, account_id: str, phase: Any, target_pct: float, current_balance: float, profit_dollar: float, profit_pct: float):
-        """Notifies when a prop firm evaluation challenge target is successfully reached."""
+    def notify_challenge_passed(
+        self,
+        account_id: str,
+        phase: Any,
+        target_pct: float,
+        current_balance: float,
+        profit_dollar: float,
+        profit_pct: float,
+        is_final: bool = False,
+        server: str = "MT5"
+    ):
+        """Notifies when a prop firm evaluation challenge target is reached (Phase 1 vs Final Phase)."""
         now_str = format_dual_time(include_date=True)
+        is_final_eval = is_final or str(phase) in ["2", "funded"]
+
+        if is_final_eval:
+            # Phase 2 (or 1-Step): Final Challenge Milestone Passed!
+            tg_text = (
+                f"👑🏆 <b>PROP FIRM CHALLENGE FULLY PASSED!</b> 🏆👑\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎉 <b>CONGRATULATIONS! ALL CHALLENGE PHASES COMPLETED!</b> 🎉\n\n"
+                f"• <b>Account:</b> <code>{account_id}</code> ({server})\n"
+                f"• <b>Final Milestone:</b> Phase {phase} Target (+{target_pct:.1f}%) REACHED on Closed Balance!\n"
+                f"• <b>Closed Balance:</b> <b>${current_balance:,.2f}</b>\n"
+                f"• <b>Challenge Profit:</b> +${profit_dollar:,.2f} (+{profit_pct:.2f}%)\n"
+                f"• <b>Protection Status:</b> 🔒 <b>TRADING PERMANENTLY HALTED (Pass Locked)</b>\n\n"
+                f"<b>NEXT STEPS TO GET FUNDED:</b>\n"
+                f"1. Submit credentials to prop firm to claim your <b>FUNDED ACCOUNT</b>.\n"
+                f"2. Switch bot lifecycle to <b>Funded Mode</b> in menu: <code>[3] Manage Lifecycle & Risk</code>.\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ <i>Evaluation passed at {now_str}</i>"
+            )
+            discord_embed = {
+                "title": f"👑🏆 PROP FIRM CHALLENGE FULLY PASSED! (FUNDED READY) 🏆👑",
+                "description": f"🎉 **CONGRATULATIONS! EVALUATION 100% COMPLETED!** 🎉\n\nAll challenge milestones have been reached on **Realized Closed Balance**.",
+                "color": 0xFFD700,  # Gold
+                "fields": [
+                    {"name": "Account", "value": f"`{account_id}` ({server})", "inline": True},
+                    {"name": "Closed Balance", "value": f"`${current_balance:,.2f}`", "inline": True},
+                    {"name": "Total Profit", "value": f"`+${profit_dollar:,.2f} (+{profit_pct:.2f}%)`", "inline": True},
+                    {"name": "Protection Status", "value": "🔒 **Trading Permanently Halted** (Zero Risk of Drawdown)", "inline": False},
+                    {"name": "Next Steps to Get Funded", "value": "1. Submit account credentials to claim your Funded Account.\n2. In bot menu: `[3] Manage Lifecycle & Risk` -> switch to **Funded Mode** (1.00% Risk).", "inline": False}
+                ],
+                "footer": {"text": f"Evaluation passed at {now_str}"}
+            }
+        else:
+            # Phase 1 Target Passed: Daily lock-in halt; resumes tomorrow or on phase advance
+            tg_text = (
+                f"🏆 <b>PHASE 1 EVALUATION TARGET PASSED!</b> 🏆\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Account:</b> <code>{account_id}</code> ({server})\n"
+                f"• <b>Phase 1 Milestone:</b> +{target_pct:.1f}% REACHED on Closed Balance!\n"
+                f"• <b>Realized Balance:</b> <b>${current_balance:,.2f}</b>\n"
+                f"• <b>Phase 1 Profit:</b> +${profit_dollar:,.2f} (+{profit_pct:.2f}%)\n"
+                f"• <b>Protection Status:</b> 🛡️ <b>TRADING HALTED FOR TODAY</b> (Daily Profit Secured)\n\n"
+                f"<b>NEXT STEPS:</b>\n"
+                f"• Trading automatically resumes tomorrow (00:00 UTC) if meeting minimum trading days.\n"
+                f"• Or advance to Phase 2 in bot menu: <code>[3] Manage Lifecycle & Risk</code> -> <code>[1] Advance Active Phase</code>.\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ <i>Milestone reached at {now_str}</i>"
+            )
+            discord_embed = {
+                "title": f"🏆 PHASE 1 EVALUATION TARGET PASSED! (+{target_pct:.1f}%) 🏆",
+                "description": f"**Phase 1 milestone reached on Realized Closed Balance!**\n\nTrading is **halted for the remainder of today** to secure profits and prevent intraday overtrading.",
+                "color": 0x00D084,  # Emerald Green
+                "fields": [
+                    {"name": "Account", "value": f"`{account_id}` ({server})", "inline": True},
+                    {"name": "Realized Balance", "value": f"`${current_balance:,.2f}`", "inline": True},
+                    {"name": "Phase 1 Profit", "value": f"`+${profit_dollar:,.2f} (+{profit_pct:.2f}%)`", "inline": True},
+                    {"name": "Protection Status", "value": "🛡️ **Trading Halted for Remainder of Today**", "inline": False},
+                    {"name": "Next Steps", "value": "• Resumes tomorrow (00:00 UTC) if meeting minimum trading days.\n• Advance to Phase 2 in bot menu: `[3] Manage Lifecycle & Risk` -> `[1] Advance Active Phase`.", "inline": False}
+                ],
+                "footer": {"text": f"Milestone reached at {now_str}"}
+            }
+        self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
+
+    def notify_phase_transition(
+        self,
+        account_id: str,
+        new_phase_name: str,
+        start_balance: float,
+        target_pct: float,
+        active_risk_pct: float,
+        is_custom_risk_on: bool = False,
+        server: str = "MT5"
+    ):
+        """Notifies when an account is transitioned to Phase 2 or Funded mode."""
+        now_str = format_dual_time(include_date=True)
+        scaling_desc = f"Phase Scaling ON ({active_risk_pct:.2f}%)" if is_custom_risk_on else f"Fixed Risk ({active_risk_pct:.2f}%)"
+        target_str = f"+{target_pct:.1f}% Milestone Target" if target_pct > 0 else "Bi-Weekly Payout Target (Capital Preservation)"
+
         tg_text = (
-            f"🏆🏆 <b>PROP FIRM CHALLENGE TARGET REACHED! (PHASE {phase})</b> 🏆🏆\n\n"
-            f"• <b>Account:</b> {account_id}\n"
-            f"• <b>Target:</b> +{target_pct:.1f}% PASSED!\n"
-            f"• <b>Current Balance:</b> ${current_balance:,.2f}\n"
-            f"• <b>Total Profit:</b> +${profit_dollar:,.2f} (+{profit_pct:.2f}%)\n"
-            f"• <b>Status:</b> Trading HALTED to protect your pass and prevent overtrading.\n"
-            f"• <b>Time:</b> {now_str}"
+            f"🚀 <b>ACCOUNT LIFECYCLE PHASE UPDATED!</b> 🚀\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Account:</b> <code>{account_id}</code> ({server})\n"
+            f"• <b>New Active Phase:</b> <b>{new_phase_name.upper()}</b>\n"
+            f"• <b>Phase Start Balance:</b> ${start_balance:,.2f}\n"
+            f"• <b>Target Milestone:</b> {target_str}\n"
+            f"• <b>Active Sizing Risk:</b> {active_risk_pct:.2f}% [{scaling_desc}]\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ <i>Updated at {now_str}</i>"
         )
         discord_embed = {
-            "title": f"🏆 PROP FIRM CHALLENGE PASSED! (Phase {phase}: +{target_pct:.1f}%) 🏆",
-            "description": f"**Evaluation target reached! Trading halted to lock in the pass.**\n\n• **Account:** `{account_id}`\n• **Balance:** `${current_balance:,.2f}`\n• **Profit:** `+${profit_dollar:,.2f} (+{profit_pct:.2f}%)`",
-            "color": 0x00FF00,
-            "footer": {"text": f"Passed at {now_str}"}
+            "title": f"🚀 ACCOUNT LIFECYCLE UPDATED: {new_phase_name.upper()} 🚀",
+            "description": f"Account `{account_id}` has been advanced to **{new_phase_name.upper()}**.",
+            "color": 0x3498DB,  # Vibrant Blue
+            "fields": [
+                {"name": "Account", "value": f"`{account_id}` ({server})", "inline": True},
+                {"name": "New Phase", "value": f"`{new_phase_name.upper()}`", "inline": True},
+                {"name": "Start Balance", "value": f"`${start_balance:,.2f}`", "inline": True},
+                {"name": "Milestone Target", "value": f"`{target_str}`", "inline": False},
+                {"name": "Active Sizing Risk", "value": f"`{active_risk_pct:.2f}%` ({scaling_desc})", "inline": False}
+            ],
+            "footer": {"text": f"Phase updated at {now_str}"}
         }
         self._enqueue({"text": tg_text, "content": "", "embed": discord_embed})
 

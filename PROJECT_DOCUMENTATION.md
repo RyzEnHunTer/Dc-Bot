@@ -160,6 +160,11 @@ Prop firm challenges fall into two primary structures, each handled with dedicat
    - **Phase 1 Target Passed:** When Phase 1 closed balance meets or exceeds the target, trading is **halted for the remainder of that trading day** to lock in profits and prevent overtrading. It does **NOT** permanently lock the bot (`target_locked = False`). On the next trading day (00:00 UTC rollover), setup arming is automatically re-enabled (allowing additional micro-trades if the prop firm requires minimum trading days) until the trader advances the account to Phase 2.
    - **Phase 2 (or 1-Step Final) Passed:** Reaching the final milestone means the evaluation is 100% completed. The bot locks permanently (`target_locked = True`), disarms all symbols, and displays a milestone pass banner so the trader can submit the account for funded status without any risk of further drawdowns.
 
+4. **Remote Telegram & Discord Notifications ([`notifier.py`](file:///d:/FOREX/DC/notifier.py)):**
+   - **Phase 1 Passed Alert:** Dispatches an Emerald Green card (`🏆 PHASE 1 EVALUATION TARGET PASSED!`), displaying realized closed balance, phase profit, daily lock-in status, and next steps (resumes tomorrow or advance to Phase 2).
+   - **Challenge 100% Passed Alert:** Dispatches a Gold Trophy card (`👑🏆 PROP FIRM CHALLENGE FULLY PASSED!`), celebrating full evaluation completion, permanent trading halt, and instructions to claim funded credentials and switch to Funded Mode.
+   - **Phase Transition Alert:** Dispatches an alert whenever the trader advances the account in the control menu (Phase 1 $\rightarrow$ Phase 2 or $\rightarrow$ Funded), confirming updated starting balance, targets, and active risk.
+
 ---
 
 ## 5. Nightly Forensic Reconciler & Audit Findings
