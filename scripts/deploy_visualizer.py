@@ -24,7 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Paths
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 VISUALIZER_DIR = BASE_DIR / "visualizer"
 INDEX_HTML = VISUALIZER_DIR / "index.html"
 DATA_JSON = VISUALIZER_DIR / "data.json"

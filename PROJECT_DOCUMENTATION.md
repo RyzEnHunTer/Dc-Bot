@@ -206,7 +206,7 @@ graph TD
 
 ## 6. Multi-Device Setup & Credential Synchronization
 
-[`setup_env.py`](file:///d:/FOREX/DC/setup_env.py) provides a complete zero-configuration environment setup wizard:
+[`scripts/setup_env.py`](file:///d:/FOREX/DC/scripts/setup_env.py) provides a complete zero-configuration environment setup wizard:
 
 ### 6.1 OS Selection & Dependency Installation
 - Prompts for OS type: **Windows (Direct Python)** vs **Linux (Virtual Environment `venv`)**.
@@ -220,13 +220,13 @@ To deploy to a new VPS or PC without manually typing tokens and credentials:
 
 1. **On your primary configured PC (Export):**
    ```powershell
-   python setup_env.py --export-base64
+   python scripts/setup_env.py --export-base64
    ```
    *(Outputs a single encrypted, portable base64 string containing `.env` and account configurations).*
 
 2. **On your target VPS / Laptop (Import in 1 second):**
    ```powershell
-   python setup_env.py --import-base64 "<PASTE_TOKEN_STRING_HERE>"
+   python scripts/setup_env.py --import-base64 "<PASTE_TOKEN_STRING_HERE>"
    ```
    *(Instantly creates `.env`, configures account logins, and verifies broker connectivity).*
 
@@ -234,13 +234,13 @@ To deploy to a new VPS or PC without manually typing tokens and credentials:
 
 ## 7. Cloud Visualizer & Deployment
 
-[`deploy_visualizer.py`](file:///d:/FOREX/DC/deploy_visualizer.py) deploys the trading visualizer to free cloud hosting (Vercel):
+[`scripts/deploy_visualizer.py`](file:///d:/FOREX/DC/scripts/deploy_visualizer.py) deploys the trading visualizer to free cloud hosting (Vercel):
 
 - **Architecture:** Isolated static deployment containing ONLY [`visualizer/index.html`](file:///d:/FOREX/DC/visualizer/index.html), [`visualizer/data.json`](file:///d:/FOREX/DC/visualizer/data.json), and TradingView Lightweight Charts.
 - **Privacy Guarantee:** Bot Python files, MT5 connection logic, account numbers, and `.env` credentials are **strictly excluded** and never uploaded.
 - **Windows Deployment Command:**
   ```powershell
-  python deploy_visualizer.py
+  python scripts/deploy_visualizer.py
   ```
   *(Uses `npx.cmd` to bypass Windows PowerShell ExecutionPolicy script restrictions).*
 
@@ -251,19 +251,43 @@ To deploy to a new VPS or PC without manually typing tokens and credentials:
 ```
 d:\FOREX\DC\
 ├── live_bot.py                 # Core MT5 live trading bot & interactive CLI
+├── start_bot.py                # Cross-platform runtime/venv launcher
+├── run_live_system.py          # Continuous supervisor (bot + visualizer server)
+├── live_server.py              # WebSocket & visualizer server
 ├── nightly_reconciler.py       # Automated tick-by-tick backtest reconciler & forensic engine
 ├── dcc_engine.py               # DCC indicator calculations & TripleGuard filters
 ├── news_engine.py              # ForexFactory economic calendar & 15m news blackout shield
 ├── notifier.py                 # Asynchronous Telegram & Discord notification dispatcher
 ├── storage_manager.py          # Rolling 7-day log retention & disk manager
-├── setup_env.py                # OS environment setup & base64 credential wizard
-├── deploy_visualizer.py        # Cloud visualizer deployment script
+├── mt5_data.py                 # Direct MT5 historical rate & tick connector
 │
 ├── bot_accounts_config.json    # Local MT5 account configs, lifecycle, CB limits
 ├── requirements.txt            # Python dependencies
 ├── PROJECT_DOCUMENTATION.md    # Master documentation (this document)
 │
-├── tests/                      # Automated test suite (26 unit tests)
+├── scripts/                    # Operational & setup utilities
+│   ├── setup_env.py            # Environment configuration & credential synchronization
+│   ├── setup_vps.py            # VPS ngrok & runtime deployment automation
+│   ├── deploy_visualizer.py    # Vercel cloud visualizer deployer
+│   ├── run_6month_backtest.py  # 6-Month high-precision tick backtest engine
+│   ├── verify_monday_backtest.py # Forensic Monday tick-by-tick replayer
+│   ├── replay_20260922.py      # Historical trade replay validator
+│   ├── fetch_yesterday_mt5.py  # MT5 tick & deal query utility
+│   ├── generate_apexhunter_report.py # Official benchmark report & chart generator
+│   └── sync_data_to_sep20.py   # Historical rate & cache synchronizer
+│
+├── docs/                       # Official strategy documentation & playbooks
+│   ├── DCC STRATEGY _ A+ Setups.pdf
+│   ├── DCC STRATEGY.pdf
+│   └── Marco Trades Playbook.pdf
+│
+├── data/                       # Historical high-frequency tick databases
+│   └── historical/             # Multi-gigabyte tick and candle archives
+│
+├── reports/                    # Generated performance audits & equity curves
+│   └── vps_forensics/          # VPS daily logs and tick surveillance dumps
+│
+├── tests/                      # Automated test suite (27 unit tests)
 │   ├── test_interactive_menu.py
 │   ├── test_circuit_breaker.py
 │   └── test_*.py

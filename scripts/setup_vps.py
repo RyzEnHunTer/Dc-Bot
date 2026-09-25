@@ -18,7 +18,7 @@ import zipfile
 import subprocess
 import urllib.request
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NGROK_EXE = os.path.join(BASE_DIR, "ngrok.exe")
 NGROK_ZIP_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
 AUTHTOKEN = "3JAuWslWesEo1HJJPuYIvOI8mL4_61Lx9759CkK8zMC9BWoSf"

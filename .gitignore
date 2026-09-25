@@ -13,16 +13,14 @@ ENV/
 
 # Large Historical Tick Data & Caches (Do NOT push to VPS repo)
 Data/
+data/
 data_cache/
 *.parquet
-"8 month data/"
-8 month data/
-vps fonrecis report/
-"vps fonrecis report/"
 
 # Backtest Reports & Historical Trade Logs
 reports/*.csv
 reports/daily_audits/*
+reports/vps_forensics/
 !reports/daily_audits/.gitkeep
 scratch/
 

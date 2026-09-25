@@ -43,7 +43,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
 CONFIG_FILE = PROJECT_ROOT / "bot_accounts_config.json"
 CONFIG_EXAMPLE = PROJECT_ROOT / "bot_accounts_config.example.json"
@@ -569,7 +569,7 @@ def print_completion_summary(python_bin: Path, venv_name: str, use_venv: bool):
     print(f"\n{Colors.BOLD}Utilities:{Colors.RESET}")
     print(f"  • Run Diagnostics:   {Colors.CYAN}python tests/test_nightly_reconciler.py{Colors.RESET}")
     print(f"  • Launch Visualizer: {Colors.CYAN}python live_server.py{Colors.RESET}")
-    print(f"  • Deploy to Vercel:  {Colors.CYAN}python deploy_visualizer.py{Colors.RESET}")
+    print(f"  • Deploy to Vercel:  {Colors.CYAN}python scripts/deploy_visualizer.py{Colors.RESET}")
     print(f"\n{Colors.CYAN}" + "=" * 78 + f"{Colors.RESET}\n")
 
 

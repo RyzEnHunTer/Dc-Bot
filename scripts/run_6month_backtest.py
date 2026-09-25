@@ -22,6 +22,10 @@ import numpy as np
 import pandas as pd
 import MetaTrader5 as mt5
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from dcc_engine import DCCEngine, SignalType, TradeSignal
 from mt5_data import MT5DataProvider
 
@@ -42,7 +46,7 @@ class FastTickBacktester:
     ):
         self.symbol = symbol
         if cache_dir is None:
-            self.cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_cache")
+            self.cache_dir = os.path.join(PROJECT_ROOT, "data_cache")
         else:
             self.cache_dir = cache_dir
         self.initial_balance = initial_balance
@@ -527,7 +531,7 @@ def run_portfolio():
     df_all['month'] = pd.to_datetime(df_all['exit_time'], utc=True).dt.strftime('%Y-%m')
 
     # Save trades log
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = PROJECT_ROOT
     log_path = os.path.join(base_dir, "reports", "trades_log_jan_jun_2026.csv")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     df_all.to_csv(log_path, index=False)

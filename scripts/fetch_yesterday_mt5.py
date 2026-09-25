@@ -45,7 +45,10 @@ def main():
             print(f"       High: {df['high'].max()} | Low: {df['low'].min()}")
             
             # Save to disk for inspection
-            out_csv = f"logs/rates_{sym}_20260922.csv"
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            logs_dir = os.path.join(project_root, "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+            out_csv = os.path.join(logs_dir, f"rates_{sym}_20260922.csv")
             df.to_csv(out_csv, index=False)
             print(f"       Saved to: {out_csv}")
         else:

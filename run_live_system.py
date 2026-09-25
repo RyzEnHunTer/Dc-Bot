@@ -186,7 +186,7 @@ def main():
                     tunnel_active = True
             else:
                 print("[!] ngrok executable not found in system PATH or local directory.")
-                print("[!] Run 'python setup_vps.py' to automatically install & configure ngrok.")
+                print("[!] Run 'python scripts/setup_vps.py' to automatically install & configure ngrok.")
                 print("[*] Continuing in Local Browser mode only.")
         else:
             print("[*] [2/3] Tunnel disabled (--no-tunnel flag detected).")
